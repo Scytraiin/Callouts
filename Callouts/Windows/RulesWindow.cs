@@ -44,6 +44,11 @@ public sealed class RulesWindow : Window, IDisposable
     // Undo of the last delete (bulk or single)
     private readonly List<(int Index, Rule Rule)> lastDeleted = new();
 
+    // Pending import (preview before applying)
+    private List<Rule>? pendingImport;
+    private CollisionChoice importChoice = CollisionChoice.Replace;
+    private string? importError;
+
     public RulesWindow(
         Configuration configuration,
         RuleEngine engine,
@@ -96,6 +101,7 @@ public sealed class RulesWindow : Window, IDisposable
     {
         this.DrawBanners();
         this.DrawToolbar();
+        this.DrawImportPanel();
         ImGui.Separator();
         this.DrawRuleList();
 
@@ -149,6 +155,18 @@ public sealed class RulesWindow : Window, IDisposable
         if (ImGui.Button("⚙ Settings"))
         {
             this.openSettings();
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("Export all"))
+        {
+            this.ExportRules(this.configuration.Rules);
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("Import"))
+        {
+            this.BeginImport();
         }
 
         // Filters
@@ -304,6 +322,12 @@ public sealed class RulesWindow : Window, IDisposable
         if (ImGui.SmallButton("Delete shown"))
         {
             this.DeleteRules(shown);
+        }
+
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Export shown"))
+        {
+            this.ExportRules(shown);
         }
 
         if (this.lastDeleted.Count > 0)
@@ -870,6 +894,74 @@ public sealed class RulesWindow : Window, IDisposable
         }
 
         ImGui.EndCombo();
+    }
+
+    private void ExportRules(IReadOnlyList<Rule> rules)
+    {
+        if (rules.Count == 0)
+        {
+            this.statusMessage = "Nothing to export.";
+            return;
+        }
+
+        ImGui.SetClipboardText(RuleCodec.Export(rules));
+        this.statusMessage = $"Copied {rules.Count} rule(s) to the clipboard.";
+    }
+
+    private void BeginImport()
+    {
+        var result = RuleCodec.Import(ImGui.GetClipboardText());
+        if (!result.Success)
+        {
+            this.pendingImport = null;
+            this.importError = result.Error;
+            return;
+        }
+
+        this.pendingImport = new List<Rule>(result.Rules);
+        this.importChoice = CollisionChoice.Replace;
+        this.importError = null;
+    }
+
+    private void DrawImportPanel()
+    {
+        if (this.importError is not null)
+        {
+            ImGui.TextColored(ErrorColor, $"Import failed: {this.importError}");
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Dismiss##import"))
+            {
+                this.importError = null;
+            }
+
+            return;
+        }
+
+        if (this.pendingImport is null)
+        {
+            return;
+        }
+
+        var collisions = RuleCodec.CountCollisions(this.configuration.Rules, this.pendingImport);
+        ImGui.TextColored(WarnColor, $"Import preview: {this.pendingImport.Count} rule(s), {collisions} already exist.");
+
+        var choice = this.importChoice;
+        EnumCombo("On duplicates", ref choice);
+        this.importChoice = choice;
+
+        if (ImGui.Button("Import now"))
+        {
+            var report = RuleCodec.Merge(this.configuration.Rules, this.pendingImport, this.importChoice);
+            this.saveConfiguration();
+            this.statusMessage = $"Imported: {report.Added} added, {report.Replaced} replaced, {report.Skipped} skipped.";
+            this.pendingImport = null;
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("Cancel import"))
+        {
+            this.pendingImport = null;
+        }
     }
 
     private void TestFire(Rule rule)

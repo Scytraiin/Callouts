@@ -91,7 +91,7 @@ downgrade, which is refused safely) can never silently lose rules.
 - If you want maximum patch-day robustness, simply leave the Advanced sources toggle
   off — the stable tier is unaffected by design.
 
-## Local validation & build *(placeholder — mirrors sibling repos)*
+## Local validation & build
 
 The Docker workflow keeps validation reproducible without a host .NET install.
 Unit tests gate the build: the image will not produce a plugin package unless the
@@ -109,7 +109,30 @@ Releases are prepared with `scripts/prepare_release.py --workspace . --version v
 --dalamud-dev-path /path/to/Hooks/dev`, which syncs all version metadata, rebuilds,
 and verifies the packaged artifacts.
 
-## Manual in-game test checklist *(placeholder)*
+## Implementation status
+
+All trigger sources, outputs, the rule engine, config safety, live events, import/export,
+and the starter pack are implemented and covered by the unit-test suite (run in the Docker
+gate). Two items require the live game and are intentionally left for maintainer bring-up:
+
+- **VFX/head-marker signature** — the advanced-tier hook signature is empty in source
+  control on purpose; it must be filled and verified against the running client. Until then
+  the advanced sources report *Failed* and the login notice fires (by design).
+- **In-game acceptance pass** — the checklist below can only be run on a Windows FFXIV client.
+
+## Maintainer release checklist (HITL)
+
+These steps are performed by the maintainer; nothing here is automated or published by the
+build:
+
+1. Run the in-game checklist below on a live client; fix or file follow-ups.
+2. Fill and verify the advanced-tier VFX signature; confirm marker mapping paths.
+3. Bump the version (`scripts/prepare_release.py --version vX.Y.Z --dalamud-dev-path …`),
+   which syncs `Callouts.csproj` / `scyt.repo.json` / README and rebuilds via Docker.
+4. Tag and create the GitHub release with `out/release/latest.zip`.
+5. Add the third entry to `MyDalamudPlugins/pluginmaster.json` and verify a clean install.
+
+## Manual in-game test checklist
 
 - [ ] Chat rule fires on a party message; does not fire on its own Echo output
 - [ ] Cast rule fires once per cast — and fires **again** when the boss recasts the

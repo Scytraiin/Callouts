@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Callouts.Core.Rules;
 
 /// <summary>The Echo (local chat line) output.</summary>
@@ -45,6 +47,7 @@ public sealed class OutputSpec
     public ToastOutput Toast { get; set; } = new();
 
     /// <summary>True when at least one output is enabled. Used by validation and dispatch.</summary>
+    [JsonIgnore]
     public bool AnyEnabled => this.Echo.Enabled || this.Sound.Enabled || this.Toast.Enabled;
 
     public OutputSpec Clone() => new()

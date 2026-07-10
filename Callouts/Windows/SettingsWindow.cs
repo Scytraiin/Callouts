@@ -5,6 +5,7 @@ using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
 
 using Callouts.Core.Engine;
+using Callouts.Core.Rules;
 
 namespace Callouts.Windows;
 
@@ -20,6 +21,7 @@ public sealed class SettingsWindow : Window, IDisposable
     private readonly Action save;
     private readonly Action<bool> onAdvancedToggled;
     private Func<string>? advancedHealth;
+    private string? starterMessage;
 
     public SettingsWindow(
         Configuration configuration,
@@ -105,6 +107,22 @@ public sealed class SettingsWindow : Window, IDisposable
             options.EventBufferSize = Math.Clamp(bufferSize, 10, 2000);
             this.buffer.SetCapacity(options.EventBufferSize);
             this.save();
+        }
+
+        ImGui.Separator();
+        ImGui.TextDisabled("STARTER RULES");
+        ImGui.TextWrapped("Add a few ready-made example rules (ready check, countdown, food expiry, wipe).");
+        if (ImGui.Button("Import starter rules"))
+        {
+            var report = RuleCodec.Merge(this.configuration.Rules, StarterPack.Create(), CollisionChoice.Replace);
+            this.save();
+            this.starterMessage = $"Starter rules: {report.Added} added, {report.Replaced} updated.";
+        }
+
+        if (!string.IsNullOrEmpty(this.starterMessage))
+        {
+            ImGui.SameLine();
+            ImGui.TextDisabled(this.starterMessage);
         }
     }
 }
