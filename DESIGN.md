@@ -123,8 +123,17 @@ Verified API references are from the local Dalamud 15 source.
 - Emits `TriggerEvent { Kind=Vfx, VfxPath, TargetName, TargetIsSelf, TargetInParty }`.
 
 ### 3.6 HeadMarkerSource (advanced ⚠)
-User-facing contract is the **named-marker picker** (PRD FR-2.5); the mechanism behind
-it is an M3 decision (PRD OQ-2):
+User-facing contract is the **named-marker picker** (PRD FR-2.5).
+
+> **OQ-2 decided (issue 015): Option A** — head markers are derived from VFX-path
+> matching via `MarkerMapping` (a maintained named-marker ↔ `vfx/lockon/eff/*` table),
+> reusing `VfxSource`'s single hook. No extra signature to maintain. ActorControl
+> (Option B) is deferred; if tethers (post-1.0) later need ActorControl, revisiting is
+> cheap because the source contract already hides the mechanism. The VFX signature
+> itself is a documented patch-day/HITL item (empty in source control until verified
+> in-game — see `VfxSource`).
+
+The two options considered were:
 - Option A: reuse VfxSource, match `vfx/lockon/eff/*` paths — zero extra hooks, but
   **requires a maintained mapping table** `named marker ↔ lockon VFX path(s)` shipped
   with the plugin (a deliverable of this option, kept in one data file).
@@ -439,4 +448,5 @@ need the live game.
 | Starter rules: importable pack (Settings + empty state) | ✅ decided (OQ-3) |
 | Duty wipe/recommence source in M2 | ✅ decided (OQ-4) |
 | Tethers | ⏳ post-1.0 (v1.x upgrade path) |
-| Head markers via VFX paths + mapping table vs ActorControl | ⏳ M3 (PRD OQ-2) |
+| Head markers: **Option A** (VFX paths + `MarkerMapping`) | ✅ decided (issue 015); ActorControl (Option B) deferred |
+| VFX-create memory signature | ⏳ HITL: empty in source, verified in-game at release (issue 017) |

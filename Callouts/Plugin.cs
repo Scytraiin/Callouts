@@ -12,6 +12,7 @@ using Lumina.Excel.Sheets;
 
 using Callouts.Core.Config;
 using Callouts.Core.Engine;
+using Callouts.Core.Rules;
 using Callouts.Sinks;
 using Callouts.Sources;
 using Callouts.Windows;
@@ -38,6 +39,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly RuleEngine engine;
     private readonly EventBuffer eventBuffer;
     private readonly List<ITriggerSource> sources = [];
+    private readonly VfxSource vfxSource;
     private readonly Dictionary<AlertOutputKind, IAlertSink> sinks;
 
     private string currentZone = string.Empty;
@@ -55,6 +57,7 @@ public sealed class Plugin : IDalamudPlugin
         IClientState clientState,
         ICondition condition,
         IDutyState dutyState,
+        IGameInteropProvider interop,
         IPluginLog log)
     {
         this.pluginInterface = pluginInterface;
@@ -92,6 +95,15 @@ public sealed class Plugin : IDalamudPlugin
             source.Start();
         }
 
+        // Advanced (hook-based) source — started only while the master toggle is on (FR-3).
+        this.vfxSource = new VfxSource(interop, objectTable, this.log);
+        this.vfxSource.OnEvent += this.HandleTriggerEvent;
+        this.engine.AvailabilityProvider = this.GetAvailability;
+        if (this.configuration.Options.AdvancedSourcesEnabled)
+        {
+            this.StartAdvancedSources();
+        }
+
         this.currentZone = this.ResolveZoneName(this.clientState.TerritoryType);
         this.clientState.TerritoryChanged += this.OnTerritoryChanged;
 
@@ -99,6 +111,7 @@ public sealed class Plugin : IDalamudPlugin
 
         this.eventsWindow = new LiveEventsWindow(this.eventBuffer, this.engine, this.CreateRuleFromEvent);
         this.settingsWindow = new SettingsWindow(this.configuration, this.engine, this.eventBuffer, this.configuration.Save, this.OnAdvancedToggled);
+        this.settingsWindow.SetAdvancedHealthProvider(this.DescribeAdvancedHealth);
         this.rulesWindow = new RulesWindow(
             this.configuration,
             this.engine,
@@ -146,6 +159,9 @@ public sealed class Plugin : IDalamudPlugin
             source.Dispose();
         }
 
+        this.vfxSource.OnEvent -= this.HandleTriggerEvent;
+        this.vfxSource.Dispose();
+
         this.windowSystem.RemoveAllWindows();
         this.rulesWindow.Dispose();
         this.eventsWindow.Dispose();
@@ -156,8 +172,73 @@ public sealed class Plugin : IDalamudPlugin
 
     private void OnAdvancedToggled(bool enabled)
     {
-        // Advanced sources are wired in issue 014; persisting the toggle is enough for now.
+        if (enabled)
+        {
+            this.StartAdvancedSources();
+        }
+        else
+        {
+            this.vfxSource.Stop();
+        }
+
         this.log.Information("Callouts: advanced sources {State}.", enabled ? "enabled" : "disabled");
+    }
+
+    private void StartAdvancedSources()
+    {
+        this.vfxSource.Start();
+        this.NotifyIfAdvancedFailed();
+    }
+
+    private void NotifyIfAdvancedFailed()
+    {
+        if (this.vfxSource.Status != SourceStatus.Failed)
+        {
+            return;
+        }
+
+        var affected = 0;
+        foreach (var rule in this.configuration.Rules)
+        {
+            if (rule.Enabled && rule.Source.Kind is TriggerKind.Vfx or TriggerKind.HeadMarker)
+            {
+                affected++;
+            }
+        }
+
+        var message = $"Callouts: advanced sources failed to start ({this.vfxSource.FailureReason}). {affected} rule(s) inactive — /callouts config.";
+        this.log.Warning(message);
+        this.ExecuteAction(new AlertAction { Kind = AlertOutputKind.Echo, Text = message });
+        this.ExecuteAction(new AlertAction { Kind = AlertOutputKind.Toast, Text = message, ToastStyle = ToastStyle.Error });
+    }
+
+    private SourceAvailability GetAvailability(TriggerKind kind)
+    {
+        if (kind is not (TriggerKind.Vfx or TriggerKind.HeadMarker))
+        {
+            return SourceAvailability.Available;
+        }
+
+        if (!this.configuration.Options.AdvancedSourcesEnabled)
+        {
+            return SourceAvailability.BlockedAdvancedOff;
+        }
+
+        return this.vfxSource.Status == SourceStatus.Failed
+            ? SourceAvailability.Failed
+            : SourceAvailability.Available;
+    }
+
+    private string DescribeAdvancedHealth()
+    {
+        if (!this.configuration.Options.AdvancedSourcesEnabled)
+        {
+            return "VFX / head markers: off";
+        }
+
+        return this.vfxSource.Status == SourceStatus.Failed
+            ? $"VFX / head markers: FAILED — {this.vfxSource.FailureReason}"
+            : $"VFX / head markers: {this.vfxSource.Status}";
     }
 
     private void SetMasterEnabled(bool enabled)

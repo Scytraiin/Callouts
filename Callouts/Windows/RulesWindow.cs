@@ -393,6 +393,12 @@ public sealed class RulesWindow : Window, IDisposable
             case TriggerKind.DutyEvent:
                 DrawDutyWhen(d.Source);
                 break;
+            case TriggerKind.Vfx:
+                DrawVfxWhen(d.Source);
+                break;
+            case TriggerKind.HeadMarker:
+                DrawMarkerWhen(d.Source);
+                break;
         }
 
         ImGui.Separator();
@@ -490,7 +496,7 @@ public sealed class RulesWindow : Window, IDisposable
             return;
         }
 
-        foreach (var kind in new[] { TriggerKind.Chat, TriggerKind.Cast, TriggerKind.Status, TriggerKind.DutyEvent })
+        foreach (var kind in new[] { TriggerKind.Chat, TriggerKind.Cast, TriggerKind.Status, TriggerKind.DutyEvent, TriggerKind.Vfx, TriggerKind.HeadMarker })
         {
             if (ImGui.Selectable(SourceKindLabel(kind), source.Kind == kind))
             {
@@ -499,6 +505,49 @@ public sealed class RulesWindow : Window, IDisposable
         }
 
         ImGui.EndCombo();
+    }
+
+    private static void DrawVfxWhen(SourceSpec s)
+    {
+        var path = s.VfxPathPattern ?? string.Empty;
+        if (ImGui.InputTextWithHint("VFX path contains", "e.g. vfx/lockon/eff/", ref path, 256))
+        {
+            s.VfxPathPattern = string.IsNullOrWhiteSpace(path) ? null : path;
+        }
+
+        var scope = s.ActorScope;
+        EnumCombo("On actor", ref scope);
+        s.ActorScope = scope;
+
+        ImGui.TextDisabled("Advanced source — enable it in Settings. Use Watch events to find paths.");
+    }
+
+    private static void DrawMarkerWhen(SourceSpec s)
+    {
+        if (ImGui.BeginCombo("Named marker", string.IsNullOrEmpty(s.MarkerKey) ? "(choose)" : s.MarkerKey))
+        {
+            foreach (var name in MarkerMapping.Names)
+            {
+                if (ImGui.Selectable(name, string.Equals(s.MarkerKey, name, StringComparison.OrdinalIgnoreCase)))
+                {
+                    s.MarkerKey = name;
+                }
+            }
+
+            ImGui.EndCombo();
+        }
+
+        var key = s.MarkerKey ?? string.Empty;
+        if (ImGui.InputTextWithHint("Marker key / raw", "e.g. spread", ref key, 128))
+        {
+            s.MarkerKey = string.IsNullOrWhiteSpace(key) ? null : key;
+        }
+
+        var scope = s.ActorScope;
+        EnumCombo("On actor", ref scope);
+        s.ActorScope = scope;
+
+        ImGui.TextDisabled("Advanced source — enable it in Settings.");
     }
 
     private void DrawChatWhen(Rule d)
@@ -1018,6 +1067,8 @@ public sealed class RulesWindow : Window, IDisposable
         TriggerKind.Cast => "Enemy / actor cast",
         TriggerKind.Status => "Status effect",
         TriggerKind.DutyEvent => "Duty event",
+        TriggerKind.Vfx => "VFX (advanced)",
+        TriggerKind.HeadMarker => "Head marker (advanced)",
         _ => kind.ToString(),
     };
 
@@ -1027,6 +1078,8 @@ public sealed class RulesWindow : Window, IDisposable
         TriggerKind.Cast => "{caster}, {action}, {zone}",
         TriggerKind.Status => "{status}, {bearer}, {zone}",
         TriggerKind.DutyEvent => "{event}, {zone}",
+        TriggerKind.Vfx => "{vfx}, {zone}",
+        TriggerKind.HeadMarker => "{marker}, {zone}",
         _ => "{zone}",
     };
 
@@ -1043,6 +1096,10 @@ public sealed class RulesWindow : Window, IDisposable
                 return "Status";
             case TriggerKind.DutyEvent:
                 return "Duty";
+            case TriggerKind.Vfx:
+                return "VFX ⚠";
+            case TriggerKind.HeadMarker:
+                return "Marker ⚠";
             default:
                 return rule.Source.Kind.ToString();
         }

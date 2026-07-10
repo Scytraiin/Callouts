@@ -41,6 +41,12 @@ public sealed class RuleEngine
     /// <summary>True while the whole plugin is off (master switch, issue 013).</summary>
     public bool MasterEnabled { get; set; } = true;
 
+    /// <summary>
+    /// Supplies per-kind availability (issue 014). Null = every kind available. Advanced kinds
+    /// return BlockedAdvancedOff / Failed so their rules are skipped and badged accordingly.
+    /// </summary>
+    public Func<TriggerKind, SourceAvailability>? AvailabilityProvider { get; set; }
+
     public IReadOnlyList<AlertAction> Process(TriggerEvent evt)
     {
         var actions = new List<AlertAction>();
@@ -54,6 +60,11 @@ public sealed class RuleEngine
         foreach (var rule in this.rulesProvider())
         {
             if (!rule.Enabled)
+            {
+                continue;
+            }
+
+            if (this.AvailabilityOf(rule.Source.Kind) != SourceAvailability.Available)
             {
                 continue;
             }
@@ -101,7 +112,17 @@ public sealed class RuleEngine
     }
 
     public RuleRuntimeState GetRuntimeState(Rule rule)
-        => RuleRuntimeStateEvaluator.Evaluate(rule, hasError: this.ruleErrors.ContainsKey(rule.Id));
+    {
+        var availability = this.AvailabilityOf(rule.Source.Kind);
+        return RuleRuntimeStateEvaluator.Evaluate(
+            rule,
+            hasError: this.ruleErrors.ContainsKey(rule.Id),
+            sourceAvailable: availability != SourceAvailability.Failed,
+            blockedAdvancedOff: availability == SourceAvailability.BlockedAdvancedOff);
+    }
+
+    private SourceAvailability AvailabilityOf(TriggerKind kind)
+        => this.AvailabilityProvider?.Invoke(kind) ?? SourceAvailability.Available;
 
     public bool TryGetError(string ruleId, out string message)
         => this.ruleErrors.TryGetValue(ruleId, out message!);
@@ -128,6 +149,8 @@ public sealed class RuleEngine
                 TriggerKind.Cast => CastTriggerMatcher.Match(rule, evt),
                 TriggerKind.Status => StatusTriggerMatcher.Match(rule, evt),
                 TriggerKind.DutyEvent => DutyTriggerMatcher.Match(rule, evt),
+                TriggerKind.Vfx => VfxTriggerMatcher.Match(rule, evt),
+                TriggerKind.HeadMarker => HeadMarkerTriggerMatcher.Match(rule, evt),
                 _ => null,
             };
 
