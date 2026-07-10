@@ -14,14 +14,18 @@ public static class RuleValidator
     {
         var errors = new List<string>();
 
-        if (string.IsNullOrWhiteSpace(rule.Source.Pattern))
+        // Chat rules match on a text pattern; other kinds match on ids/filters.
+        if (rule.Source.Kind == TriggerKind.Chat)
         {
-            errors.Add("Add a pattern to enable Save.");
-        }
-        else if (rule.Source.MatchMode == MatchMode.Regex
-            && !RegexFactory.TryCompile(rule.Source.Pattern, rule.Source.CaseSensitive, out _, out var regexError))
-        {
-            errors.Add(regexError ?? "Invalid regex.");
+            if (string.IsNullOrWhiteSpace(rule.Source.Pattern))
+            {
+                errors.Add("Add a pattern to enable Save.");
+            }
+            else if (rule.Source.MatchMode == MatchMode.Regex
+                && !RegexFactory.TryCompile(rule.Source.Pattern, rule.Source.CaseSensitive, out _, out var regexError))
+            {
+                errors.Add(regexError ?? "Invalid regex.");
+            }
         }
 
         if (!rule.Outputs.AnyEnabled)

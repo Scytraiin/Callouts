@@ -198,8 +198,76 @@ public sealed class RulesWindow : Window, IDisposable
 
         ImGui.Separator();
         ImGui.TextDisabled("WHEN");
-        ImGui.TextUnformatted("Source: Chat message");
+        DrawSourceKindPicker(d.Source);
 
+        switch (d.Source.Kind)
+        {
+            case TriggerKind.Chat:
+                this.DrawChatWhen(d);
+                break;
+            case TriggerKind.Cast:
+                DrawCastWhen(d.Source);
+                break;
+            case TriggerKind.Status:
+                DrawStatusWhen(d.Source);
+                break;
+            case TriggerKind.DutyEvent:
+                DrawDutyWhen(d.Source);
+                break;
+        }
+
+        ImGui.Separator();
+        ImGui.TextDisabled($"THEN  (placeholders: {PlaceholderHint(d.Source.Kind)})");
+
+        this.DrawEchoOutput(d);
+        this.DrawSoundOutput(d);
+        this.DrawToastOutput(d);
+
+        ImGui.Separator();
+
+        foreach (var error in RuleValidator.Validate(d))
+        {
+            ImGui.TextColored(ErrorColor, $"⚠ {error}");
+        }
+
+        if (ImGui.Button("Save rule"))
+        {
+            this.TrySave();
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("Cancel"))
+        {
+            this.CancelEdit();
+        }
+
+        if (!string.IsNullOrEmpty(this.statusMessage))
+        {
+            ImGui.SameLine();
+            ImGui.TextColored(OkColor, this.statusMessage);
+        }
+    }
+
+    private static void DrawSourceKindPicker(SourceSpec source)
+    {
+        if (!ImGui.BeginCombo("Source", SourceKindLabel(source.Kind)))
+        {
+            return;
+        }
+
+        foreach (var kind in new[] { TriggerKind.Chat, TriggerKind.Cast, TriggerKind.Status, TriggerKind.DutyEvent })
+        {
+            if (ImGui.Selectable(SourceKindLabel(kind), source.Kind == kind))
+            {
+                source.Kind = kind;
+            }
+        }
+
+        ImGui.EndCombo();
+    }
+
+    private void DrawChatWhen(Rule d)
+    {
         this.DrawChannelPicker(d.Source);
         this.DrawMatchModePicker(d.Source);
 
@@ -234,38 +302,132 @@ public sealed class RulesWindow : Window, IDisposable
         }
 
         this.DrawLiveTester(d);
+    }
 
-        ImGui.Separator();
-        ImGui.TextDisabled("THEN  (placeholders: {sender}, {message}, $1..$9)");
-
-        this.DrawEchoOutput(d);
-        this.DrawSoundOutput(d);
-        this.DrawToastOutput(d);
-
-        ImGui.Separator();
-
-        foreach (var error in RuleValidator.Validate(d))
+    private static void DrawCastWhen(SourceSpec s)
+    {
+        var actionId = s.ActionId;
+        if (ImGui.InputInt("Action id (0 = any)", ref actionId))
         {
-            ImGui.TextColored(ErrorColor, $"⚠ {error}");
+            s.ActionId = Math.Max(0, actionId);
         }
 
-        if (ImGui.Button("Save rule"))
+        var actionName = s.ActionNameContains ?? string.Empty;
+        if (ImGui.InputTextWithHint("Action name contains", "e.g. Ultima", ref actionName, 128))
         {
-            this.TrySave();
+            s.ActionNameContains = string.IsNullOrWhiteSpace(actionName) ? null : actionName;
         }
 
-        ImGui.SameLine();
-        if (ImGui.Button("Cancel"))
+        var scope = s.CasterScope;
+        EnumCombo("Caster", ref scope);
+        s.CasterScope = scope;
+
+        var caster = s.CasterNameContains ?? string.Empty;
+        if (ImGui.InputTextWithHint("Caster name contains (optional)", "any caster", ref caster, 128))
         {
-            this.CancelEdit();
+            s.CasterNameContains = string.IsNullOrWhiteSpace(caster) ? null : caster;
         }
 
-        if (!string.IsNullOrEmpty(this.statusMessage))
+        var onlyMe = s.OnlyTargetingMe;
+        if (ImGui.Checkbox("Only when targeting me", ref onlyMe))
         {
-            ImGui.SameLine();
-            ImGui.TextColored(OkColor, this.statusMessage);
+            s.OnlyTargetingMe = onlyMe;
+        }
+
+        var onlyParty = s.OnlyTargetingParty;
+        if (ImGui.Checkbox("Only when targeting a party member", ref onlyParty))
+        {
+            s.OnlyTargetingParty = onlyParty;
+        }
+
+        ImGui.TextDisabled("Tip: only actions with a cast bar are detected. Use Watch events to find ids.");
+    }
+
+    private static void DrawStatusWhen(SourceSpec s)
+    {
+        var statusId = s.StatusId;
+        if (ImGui.InputInt("Status id (0 = any)", ref statusId))
+        {
+            s.StatusId = Math.Max(0, statusId);
+        }
+
+        var statusName = s.StatusNameContains ?? string.Empty;
+        if (ImGui.InputTextWithHint("Status name contains", "e.g. Well Fed", ref statusName, 128))
+        {
+            s.StatusNameContains = string.IsNullOrWhiteSpace(statusName) ? null : statusName;
+        }
+
+        var change = s.StatusChange;
+        EnumCombo("Change", ref change);
+        s.StatusChange = change;
+
+        var bearer = s.Bearer;
+        EnumCombo("On", ref bearer);
+        s.Bearer = bearer;
+
+        var minStacks = s.MinStacks;
+        if (ImGui.InputInt("Min stacks (0 = any)", ref minStacks))
+        {
+            s.MinStacks = Math.Max(0, minStacks);
         }
     }
+
+    private static void DrawDutyWhen(SourceSpec s)
+    {
+        // Only the events the DutyEventSource emits are offered.
+        var options = new[] { DutyEventFilter.Any, DutyEventFilter.Wiped, DutyEventFilter.Recommenced };
+        if (!ImGui.BeginCombo("Duty event", s.DutyEvent.ToString()))
+        {
+            return;
+        }
+
+        foreach (var option in options)
+        {
+            if (ImGui.Selectable(option.ToString(), s.DutyEvent == option))
+            {
+                s.DutyEvent = option;
+            }
+        }
+
+        ImGui.EndCombo();
+    }
+
+    private static void EnumCombo<TEnum>(string label, ref TEnum value)
+        where TEnum : struct, Enum
+    {
+        if (!ImGui.BeginCombo(label, value.ToString()))
+        {
+            return;
+        }
+
+        foreach (var candidate in Enum.GetValues<TEnum>())
+        {
+            if (ImGui.Selectable(candidate.ToString(), candidate.Equals(value)))
+            {
+                value = candidate;
+            }
+        }
+
+        ImGui.EndCombo();
+    }
+
+    private static string SourceKindLabel(TriggerKind kind) => kind switch
+    {
+        TriggerKind.Chat => "Chat message",
+        TriggerKind.Cast => "Enemy / actor cast",
+        TriggerKind.Status => "Status effect",
+        TriggerKind.DutyEvent => "Duty event",
+        _ => kind.ToString(),
+    };
+
+    private static string PlaceholderHint(TriggerKind kind) => kind switch
+    {
+        TriggerKind.Chat => "{sender}, {message}, {zone}, $1..$9",
+        TriggerKind.Cast => "{caster}, {action}, {zone}",
+        TriggerKind.Status => "{status}, {bearer}, {zone}",
+        TriggerKind.DutyEvent => "{event}, {zone}",
+        _ => "{zone}",
+    };
 
     private void DrawMatchModePicker(SourceSpec source)
     {

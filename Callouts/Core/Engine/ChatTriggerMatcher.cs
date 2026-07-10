@@ -65,6 +65,7 @@ public static class ChatTriggerMatcher
         {
             ["sender"] = evt.Sender,
             ["message"] = evt.Message,
+            ["zone"] = evt.Zone,
         };
 
         return new MatchResult { Values = values, Captures = captures };

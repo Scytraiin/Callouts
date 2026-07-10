@@ -120,6 +120,9 @@ public sealed class RuleEngine
             var result = rule.Source.Kind switch
             {
                 TriggerKind.Chat => ChatTriggerMatcher.Match(rule, evt, compiled),
+                TriggerKind.Cast => CastTriggerMatcher.Match(rule, evt),
+                TriggerKind.Status => StatusTriggerMatcher.Match(rule, evt),
+                TriggerKind.DutyEvent => DutyTriggerMatcher.Match(rule, evt),
                 _ => null,
             };
 

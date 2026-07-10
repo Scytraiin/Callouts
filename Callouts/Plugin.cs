@@ -2,10 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 
+using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.Command;
 using Dalamud.Interface.Windowing;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
+
+using Lumina.Excel.Sheets;
 
 using Callouts.Core.Config;
 using Callouts.Core.Engine;
@@ -21,6 +24,9 @@ public sealed class Plugin : IDalamudPlugin
 
     private readonly IDalamudPluginInterface pluginInterface;
     private readonly ICommandManager commandManager;
+    private readonly IClientState clientState;
+    private readonly IDataManager dataManager;
+    private readonly ICondition condition;
     private readonly IPluginLog log;
 
     private readonly WindowSystem windowSystem = new("Callouts");
@@ -28,31 +34,42 @@ public sealed class Plugin : IDalamudPlugin
     private readonly Configuration configuration;
 
     private readonly RuleEngine engine;
-    private readonly ChatSource chatSource;
+    private readonly List<ITriggerSource> sources = [];
     private readonly Dictionary<AlertOutputKind, IAlertSink> sinks;
+
+    private string currentZone = string.Empty;
 
     public Plugin(
         IDalamudPluginInterface pluginInterface,
         ICommandManager commandManager,
         IChatGui chatGui,
         IToastGui toastGui,
+        IObjectTable objectTable,
+        IFramework framework,
+        IPartyList partyList,
+        ITargetManager targetManager,
+        IDataManager dataManager,
+        IClientState clientState,
+        ICondition condition,
+        IDutyState dutyState,
         IPluginLog log)
     {
         this.pluginInterface = pluginInterface;
         this.commandManager = commandManager;
+        this.clientState = clientState;
+        this.dataManager = dataManager;
+        this.condition = condition;
         this.log = log;
 
         // Migrate/back up the on-disk config before loading it (FR-9).
         this.configuration = this.LoadConfiguration(out var configNotice);
 
-        // Core engine reads rules live from saved config; options seed the gates + master switch.
         var rate = this.configuration.Options.RateLimitPerSecond;
         this.engine = new RuleEngine(() => this.configuration.Rules, null, new RateLimiter(rate, rate))
         {
             MasterEnabled = this.configuration.Options.MasterEnabled,
         };
 
-        // Output sinks, keyed by the action kind they execute.
         this.sinks = new Dictionary<AlertOutputKind, IAlertSink>
         {
             [AlertOutputKind.Echo] = new EchoSink(chatGui, this.log),
@@ -60,10 +77,20 @@ public sealed class Plugin : IDalamudPlugin
             [AlertOutputKind.Toast] = new ToastSink(toastGui, this.log),
         };
 
-        // Trigger sources feed normalized events into the engine.
-        this.chatSource = new ChatSource(chatGui, this.log);
-        this.chatSource.OnEvent += this.HandleTriggerEvent;
-        this.chatSource.Start();
+        // Stable trigger sources — always on.
+        this.sources.Add(new ChatSource(chatGui, this.log));
+        this.sources.Add(new CastSource(objectTable, framework, partyList, dataManager, this.log));
+        this.sources.Add(new StatusSource(objectTable, framework, partyList, targetManager, dataManager, this.log));
+        this.sources.Add(new DutyEventSource(dutyState, this.log));
+
+        foreach (var source in this.sources)
+        {
+            source.OnEvent += this.HandleTriggerEvent;
+            source.Start();
+        }
+
+        this.currentZone = this.ResolveZoneName(this.clientState.TerritoryType);
+        this.clientState.TerritoryChanged += this.OnTerritoryChanged;
 
         this.rulesWindow = new RulesWindow(this.configuration, this.engine, this.configuration.Save, this.ExecuteAction);
         this.windowSystem.AddWindow(this.rulesWindow);
@@ -86,6 +113,26 @@ public sealed class Plugin : IDalamudPlugin
         this.log.Information("Callouts initialized.");
     }
 
+    public void Dispose()
+    {
+        this.pluginInterface.UiBuilder.OpenConfigUi -= this.OpenMainUi;
+        this.pluginInterface.UiBuilder.OpenMainUi -= this.OpenMainUi;
+        this.pluginInterface.UiBuilder.Draw -= this.DrawUi;
+
+        this.commandManager.RemoveHandler(CommandName);
+
+        this.clientState.TerritoryChanged -= this.OnTerritoryChanged;
+
+        foreach (var source in this.sources)
+        {
+            source.OnEvent -= this.HandleTriggerEvent;
+            source.Dispose();
+        }
+
+        this.windowSystem.RemoveAllWindows();
+        this.rulesWindow.Dispose();
+    }
+
     private Configuration LoadConfiguration(out string? notice)
     {
         notice = null;
@@ -106,7 +153,6 @@ public sealed class Plugin : IDalamudPlugin
 
         var plan = ConfigMigrator.Plan(raw, Configuration.CurrentVersion);
 
-        // Unconditional pre-migration backup whenever the stored version differs.
         if (plan.NeedsBackup && raw is not null && plan.BackupFileName is not null)
         {
             try
@@ -123,7 +169,6 @@ public sealed class Plugin : IDalamudPlugin
             }
         }
 
-        // Downgrade (stored newer than code) → refuse: load defaults, keep the backup.
         var config = plan.RefuseAsDowngrade
             ? new Configuration()
             : this.pluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
@@ -134,27 +179,20 @@ public sealed class Plugin : IDalamudPlugin
         return config;
     }
 
-    public void Dispose()
-    {
-        this.pluginInterface.UiBuilder.OpenConfigUi -= this.OpenMainUi;
-        this.pluginInterface.UiBuilder.OpenMainUi -= this.OpenMainUi;
-        this.pluginInterface.UiBuilder.Draw -= this.DrawUi;
-
-        this.commandManager.RemoveHandler(CommandName);
-
-        this.chatSource.OnEvent -= this.HandleTriggerEvent;
-        this.chatSource.Dispose();
-
-        this.windowSystem.RemoveAllWindows();
-        this.rulesWindow.Dispose();
-    }
-
     private void HandleTriggerEvent(TriggerEvent evt)
     {
+        var enriched = evt with
+        {
+            Zone = this.currentZone,
+            TerritoryId = this.clientState.TerritoryType,
+            InCombat = this.condition[ConditionFlag.InCombat],
+            InDuty = this.condition[ConditionFlag.BoundByDuty],
+        };
+
         IReadOnlyList<AlertAction> actions;
         try
         {
-            actions = this.engine.Process(evt);
+            actions = this.engine.Process(enriched);
         }
         catch (Exception ex)
         {
@@ -174,6 +212,27 @@ public sealed class Plugin : IDalamudPlugin
         {
             sink.Execute(action);
         }
+    }
+
+    private void OnTerritoryChanged(uint territoryType)
+    {
+        this.currentZone = this.ResolveZoneName(territoryType);
+    }
+
+    private string ResolveZoneName(uint territoryType)
+    {
+        if (territoryType == 0)
+        {
+            return string.Empty;
+        }
+
+        if (!this.dataManager.GetExcelSheet<TerritoryType>().TryGetRow(territoryType, out var territory))
+        {
+            return string.Empty;
+        }
+
+        var name = territory.PlaceName.ValueNullable?.Name.ExtractText();
+        return string.IsNullOrWhiteSpace(name) ? string.Empty : name;
     }
 
     private void OnCommand(string command, string args)
