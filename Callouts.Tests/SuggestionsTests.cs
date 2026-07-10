@@ -107,6 +107,52 @@ public sealed class SuggestionsTests
     }
 
     [Fact]
+    public void RollEncounter_ThisFightResets_ThisSessionKeepsBoth()
+    {
+        var c = new SuggestionCollector();
+        c.Observe(EnemyCast(id: 1, name: "A"));
+        c.Observe(EnemyCast(id: 1, name: "A"));
+
+        c.RollEncounter(); // fight 1 ends
+
+        c.Observe(EnemyCast(id: 2, name: "B"));
+
+        // This fight = only the current encounter (B).
+        var fight = c.GetSuggestions(NoRules, NoneIgnored, EncounterScope.ThisFight);
+        Assert.Single(fight);
+        Assert.Equal(2, fight[0].ProposedSource.ActionId);
+
+        // This session = both encounters (A + B).
+        var session = c.GetSuggestions(NoRules, NoneIgnored, EncounterScope.ThisSession);
+        Assert.Equal(2, session.Count);
+    }
+
+    [Fact]
+    public void RollEncounter_MergesCountsForSameKeyAcrossEncounters()
+    {
+        var c = new SuggestionCollector();
+        c.Observe(EnemyCast(id: 5, name: "Repeat"));
+        c.RollEncounter();
+        c.Observe(EnemyCast(id: 5, name: "Repeat"));
+        c.Observe(EnemyCast(id: 5, name: "Repeat"));
+
+        var session = c.GetSuggestions(NoRules, NoneIgnored, EncounterScope.ThisSession);
+        Assert.Equal(3, Assert.Single(session).Count);
+    }
+
+    [Fact]
+    public void CopyCode_RoundTripsToSameRule()
+    {
+        var c = new SuggestionCollector();
+        c.Observe(StatusGain(id: 910, name: "Doom", self: true));
+        var rule = c.GetSuggestions(NoRules, NoneIgnored)[0].ToRule();
+
+        var result = RuleCodec.Import(RuleCodec.Export([rule]));
+        Assert.True(result.Success);
+        Assert.Equal(910, Assert.Single(result.Rules).Source.StatusId);
+    }
+
+    [Fact]
     public void ToRule_ProducesUsableRule()
     {
         var c = new SuggestionCollector();

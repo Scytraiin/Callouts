@@ -48,6 +48,22 @@ public sealed class Candidate
 public sealed class SuggestionCollector
 {
     private readonly Dictionary<string, Candidate> current = new();
+    private Dictionary<string, Candidate> previous = new();
+
+    /// <summary>
+    /// Ends the current encounter and starts a fresh one, keeping the just-finished encounter
+    /// available under <see cref="EncounterScope.ThisSession"/> (the plugin calls this on combat-enter).
+    /// </summary>
+    public void RollEncounter()
+    {
+        if (this.current.Count == 0)
+        {
+            return; // nothing to roll (avoids wiping "previous" on repeated combat pulses)
+        }
+
+        this.previous = new Dictionary<string, Candidate>(this.current);
+        this.current.Clear();
+    }
 
     public void Observe(TriggerEvent evt)
     {
@@ -72,10 +88,15 @@ public sealed class SuggestionCollector
         Enrich(candidate, evt);
     }
 
-    public IReadOnlyList<Suggestion> GetSuggestions(IReadOnlyList<Rule> existingRules, ISet<string> ignored)
+    public IReadOnlyList<Suggestion> GetSuggestions(
+        IReadOnlyList<Rule> existingRules,
+        ISet<string> ignored,
+        EncounterScope scope = EncounterScope.ThisFight)
     {
+        var candidates = scope == EncounterScope.ThisSession ? this.MergeSession() : this.current.Values;
+
         var list = new List<Suggestion>();
-        foreach (var candidate in this.current.Values)
+        foreach (var candidate in candidates)
         {
             if (ignored.Contains(candidate.Key))
             {
@@ -91,7 +112,42 @@ public sealed class SuggestionCollector
 
     public int CandidateCount => this.current.Count;
 
-    public void Clear() => this.current.Clear();
+    public void Clear()
+    {
+        this.current.Clear();
+        this.previous.Clear();
+    }
+
+    private IEnumerable<Candidate> MergeSession()
+    {
+        var merged = new Dictionary<string, Candidate>();
+        foreach (var source in new[] { this.previous, this.current })
+        {
+            foreach (var c in source.Values)
+            {
+                if (!merged.TryGetValue(c.Key, out var m))
+                {
+                    m = new Candidate { Key = c.Key, Kind = c.Kind, Id = c.Id, IsSelf = c.IsSelf, InParty = c.InParty };
+                    merged[c.Key] = m;
+                }
+
+                m.Count += c.Count;
+                m.TargetedMeCount += c.TargetedMeCount;
+                m.Name = string.IsNullOrEmpty(m.Name) ? c.Name : m.Name;
+                m.MaxCastTimeSeconds = Math.Max(m.MaxCastTimeSeconds, c.MaxCastTimeSeconds);
+                if (c.AoeShape != AoeShape.None)
+                {
+                    m.AoeShape = c.AoeShape;
+                    m.AoeRange = c.AoeRange;
+                }
+
+                m.IsDebuff |= c.IsDebuff;
+                m.DurationSeconds = Math.Max(m.DurationSeconds, c.DurationSeconds);
+            }
+        }
+
+        return merged.Values;
+    }
 
     // ---- keying ----
 

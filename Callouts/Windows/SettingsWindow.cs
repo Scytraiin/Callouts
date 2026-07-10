@@ -109,6 +109,16 @@ public sealed class SettingsWindow : Window, IDisposable
         }
 
         ImGui.Separator();
+        ImGui.TextDisabled("SUGGESTIONS");
+
+        var autoOpen = options.AutoOpenSuggestions;
+        if (ImGui.Checkbox("Open Suggestions automatically when combat ends", ref autoOpen))
+        {
+            options.AutoOpenSuggestions = autoOpen;
+            this.save();
+        }
+
+        ImGui.Separator();
         ImGui.TextDisabled("STARTER RULES");
         ImGui.TextWrapped("Add a few ready-made example rules (ready check, countdown, food expiry, wipe).");
         if (ImGui.Button("Import starter rules"))

@@ -110,13 +110,14 @@ public sealed class Plugin : IDalamudPlugin
 
         this.currentZone = this.ResolveZoneName(this.clientState.TerritoryType);
         this.clientState.TerritoryChanged += this.OnTerritoryChanged;
+        this.condition.ConditionChange += this.OnConditionChange;
 
         this.eventBuffer = new EventBuffer(this.configuration.Options.EventBufferSize);
 
         this.eventsWindow = new LiveEventsWindow(this.eventBuffer, this.engine, this.CreateRuleFromEvent);
         this.settingsWindow = new SettingsWindow(this.configuration, this.engine, this.eventBuffer, this.configuration.Save, this.OnAdvancedToggled);
         this.settingsWindow.SetAdvancedHealthProvider(this.DescribeAdvancedHealth);
-        this.suggestionsWindow = new SuggestionsWindow(this.suggestionCollector, this.configuration, this.CreateRuleFromSuggestion);
+        this.suggestionsWindow = new SuggestionsWindow(this.suggestionCollector, this.configuration, this.CreateRuleFromSuggestion, this.configuration.Save);
         this.rulesWindow = new RulesWindow(
             this.configuration,
             this.engine,
@@ -159,6 +160,7 @@ public sealed class Plugin : IDalamudPlugin
         this.commandManager.RemoveHandler(CommandName);
 
         this.clientState.TerritoryChanged -= this.OnTerritoryChanged;
+        this.condition.ConditionChange -= this.OnConditionChange;
 
         foreach (var source in this.sources)
         {
@@ -354,6 +356,24 @@ public sealed class Plugin : IDalamudPlugin
     private void OnTerritoryChanged(uint territoryType)
     {
         this.currentZone = this.ResolveZoneName(territoryType);
+    }
+
+    private void OnConditionChange(ConditionFlag flag, bool value)
+    {
+        if (flag != ConditionFlag.InCombat)
+        {
+            return;
+        }
+
+        if (value)
+        {
+            // Entering combat starts a fresh encounter; the finished one stays under "This session".
+            this.suggestionCollector.RollEncounter();
+        }
+        else if (this.configuration.Options.AutoOpenSuggestions)
+        {
+            this.suggestionsWindow.IsOpen = true;
+        }
     }
 
     private string ResolveZoneName(uint territoryType)

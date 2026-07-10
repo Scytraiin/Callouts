@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace Callouts.Core.Config;
 
 /// <summary>
@@ -20,4 +22,10 @@ public sealed class GlobalOptions
 
     /// <summary>Live-events ring buffer size (issue 010).</summary>
     public int EventBufferSize { get; set; } = 200;
+
+    /// <summary>Suggestion keys the user dismissed; never re-suggested (issue 020).</summary>
+    public List<string> IgnoredSuggestionKeys { get; set; } = [];
+
+    /// <summary>Open the Suggestions window automatically when combat ends (issue 020).</summary>
+    public bool AutoOpenSuggestions { get; set; }
 }
