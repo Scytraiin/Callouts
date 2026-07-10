@@ -3,16 +3,26 @@ using System.Collections.Generic;
 namespace Callouts.Core.Engine;
 
 /// <summary>
-/// The outcome of a successful match. Carries the values a placeholder renderer will need
-/// (issue 004); issue 002 populates <see cref="Sender"/> and <see cref="Message"/> and
-/// leaves <see cref="Captures"/> empty (regex capture groups arrive with regex mode).
+/// The outcome of a successful match. Carries the values a <see cref="PlaceholderRenderer"/>
+/// substitutes into output text: named placeholders ({sender}, {caster}, …) in
+/// <see cref="Values"/> and positional regex groups ($1..$9) in <see cref="Captures"/>.
 /// </summary>
 public sealed record MatchResult
 {
-    public string Sender { get; init; } = string.Empty;
+    public IReadOnlyDictionary<string, string> Values { get; init; }
+        = new Dictionary<string, string>();
 
-    public string Message { get; init; } = string.Empty;
-
-    /// <summary>Regex capture groups ($1..$9). Empty for Contains matches.</summary>
+    /// <summary>Regex capture groups. Index 0 = $1. Empty for Contains matches.</summary>
     public IReadOnlyList<string> Captures { get; init; } = [];
+
+    public static MatchResult FromValues(params (string Key, string Value)[] values)
+    {
+        var dict = new Dictionary<string, string>(System.StringComparer.OrdinalIgnoreCase);
+        foreach (var (key, value) in values)
+        {
+            dict[key] = value;
+        }
+
+        return new MatchResult { Values = dict };
+    }
 }

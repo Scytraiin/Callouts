@@ -1,14 +1,19 @@
+using System.Collections.Generic;
+using System.Text.RegularExpressions;
+
 using Callouts.Core.Rules;
 
 namespace Callouts.Core.Engine;
 
 /// <summary>
-/// Pure matcher for chat rules. Issue 002 implements Contains mode only; Regex mode and
-/// capture groups arrive in issue 004.
+/// Pure matcher for chat rules. Contains and Regex modes. For Regex the caller supplies a
+/// pre-compiled <see cref="Regex"/> (the engine owns compilation + caching + error handling);
+/// a regex match here may throw <see cref="RegexMatchTimeoutException"/>, which the engine
+/// catches and turns into a RuleError.
 /// </summary>
 public static class ChatTriggerMatcher
 {
-    public static MatchResult? Match(Rule rule, TriggerEvent evt)
+    public static MatchResult? Match(Rule rule, TriggerEvent evt, Regex? compiledPattern = null)
     {
         if (evt.Kind != TriggerKind.Chat || rule.Source.Kind != TriggerKind.Chat)
         {
@@ -27,18 +32,52 @@ public static class ChatTriggerMatcher
             return null;
         }
 
-        // Optional sender filter (contains).
+        // Optional sender filter (always "contains", never regex — FR-2.1).
         if (!string.IsNullOrEmpty(rule.Source.SenderPattern)
             && !TextMatch.Contains(evt.Sender, rule.Source.SenderPattern, rule.Source.CaseSensitive))
         {
             return null;
         }
 
-        if (!TextMatch.Contains(evt.Message, rule.Source.Pattern, rule.Source.CaseSensitive))
+        IReadOnlyList<string> captures = [];
+
+        if (rule.Source.MatchMode == MatchMode.Regex)
+        {
+            if (compiledPattern is null)
+            {
+                return null;
+            }
+
+            var match = compiledPattern.Match(evt.Message);
+            if (!match.Success)
+            {
+                return null;
+            }
+
+            captures = ExtractCaptures(match);
+        }
+        else if (!TextMatch.Contains(evt.Message, rule.Source.Pattern, rule.Source.CaseSensitive))
         {
             return null;
         }
 
-        return new MatchResult { Sender = evt.Sender, Message = evt.Message };
+        var values = new Dictionary<string, string>(System.StringComparer.OrdinalIgnoreCase)
+        {
+            ["sender"] = evt.Sender,
+            ["message"] = evt.Message,
+        };
+
+        return new MatchResult { Values = values, Captures = captures };
+    }
+
+    private static List<string> ExtractCaptures(Match match)
+    {
+        var captures = new List<string>();
+        for (var i = 1; i < match.Groups.Count; i++)
+        {
+            captures.Add(match.Groups[i].Value);
+        }
+
+        return captures;
     }
 }

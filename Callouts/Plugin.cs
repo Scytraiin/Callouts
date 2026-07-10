@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 
 using Dalamud.Game.Command;
 using Dalamud.Interface.Windowing;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 
+using Callouts.Core.Config;
 using Callouts.Core.Engine;
 using Callouts.Sinks;
 using Callouts.Sources;
@@ -33,22 +35,29 @@ public sealed class Plugin : IDalamudPlugin
         IDalamudPluginInterface pluginInterface,
         ICommandManager commandManager,
         IChatGui chatGui,
+        IToastGui toastGui,
         IPluginLog log)
     {
         this.pluginInterface = pluginInterface;
         this.commandManager = commandManager;
         this.log = log;
 
-        this.configuration = this.pluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
-        this.configuration.Initialize(this.pluginInterface);
+        // Migrate/back up the on-disk config before loading it (FR-9).
+        this.configuration = this.LoadConfiguration(out var configNotice);
 
-        // Core engine reads rules live from saved config.
-        this.engine = new RuleEngine(() => this.configuration.Rules);
+        // Core engine reads rules live from saved config; options seed the gates + master switch.
+        var rate = this.configuration.Options.RateLimitPerSecond;
+        this.engine = new RuleEngine(() => this.configuration.Rules, null, new RateLimiter(rate, rate))
+        {
+            MasterEnabled = this.configuration.Options.MasterEnabled,
+        };
 
         // Output sinks, keyed by the action kind they execute.
         this.sinks = new Dictionary<AlertOutputKind, IAlertSink>
         {
             [AlertOutputKind.Echo] = new EchoSink(chatGui, this.log),
+            [AlertOutputKind.Sound] = new SoundSink(this.log),
+            [AlertOutputKind.Toast] = new ToastSink(toastGui, this.log),
         };
 
         // Trigger sources feed normalized events into the engine.
@@ -56,7 +65,7 @@ public sealed class Plugin : IDalamudPlugin
         this.chatSource.OnEvent += this.HandleTriggerEvent;
         this.chatSource.Start();
 
-        this.rulesWindow = new RulesWindow(this.configuration, this.configuration.Save);
+        this.rulesWindow = new RulesWindow(this.configuration, this.engine, this.configuration.Save, this.ExecuteAction);
         this.windowSystem.AddWindow(this.rulesWindow);
 
         this.commandManager.AddHandler(CommandName, new CommandInfo(this.OnCommand)
@@ -68,7 +77,61 @@ public sealed class Plugin : IDalamudPlugin
         this.pluginInterface.UiBuilder.OpenMainUi += this.OpenMainUi;
         this.pluginInterface.UiBuilder.OpenConfigUi += this.OpenMainUi;
 
+        if (!string.IsNullOrEmpty(configNotice))
+        {
+            this.log.Information(configNotice);
+            this.ExecuteAction(new AlertAction { Kind = AlertOutputKind.Echo, Text = configNotice });
+        }
+
         this.log.Information("Callouts initialized.");
+    }
+
+    private Configuration LoadConfiguration(out string? notice)
+    {
+        notice = null;
+
+        string? raw = null;
+        try
+        {
+            var file = this.pluginInterface.ConfigFile;
+            if (file.Exists)
+            {
+                raw = File.ReadAllText(file.FullName);
+            }
+        }
+        catch (Exception ex)
+        {
+            this.log.Error(ex, "Callouts: failed to read config file for migration.");
+        }
+
+        var plan = ConfigMigrator.Plan(raw, Configuration.CurrentVersion);
+
+        // Unconditional pre-migration backup whenever the stored version differs.
+        if (plan.NeedsBackup && raw is not null && plan.BackupFileName is not null)
+        {
+            try
+            {
+                var dir = this.pluginInterface.ConfigFile.Directory;
+                if (dir is not null)
+                {
+                    File.WriteAllText(Path.Combine(dir.FullName, plan.BackupFileName), raw);
+                }
+            }
+            catch (Exception ex)
+            {
+                this.log.Error(ex, "Callouts: failed to write config backup.");
+            }
+        }
+
+        // Downgrade (stored newer than code) → refuse: load defaults, keep the backup.
+        var config = plan.RefuseAsDowngrade
+            ? new Configuration()
+            : this.pluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
+
+        config.Initialize(this.pluginInterface);
+        config.Version = Configuration.CurrentVersion;
+        notice = plan.Notice;
+        return config;
     }
 
     public void Dispose()
@@ -101,10 +164,15 @@ public sealed class Plugin : IDalamudPlugin
 
         foreach (var action in actions)
         {
-            if (this.sinks.TryGetValue(action.Kind, out var sink))
-            {
-                sink.Execute(action);
-            }
+            this.ExecuteAction(action);
+        }
+    }
+
+    private void ExecuteAction(AlertAction action)
+    {
+        if (this.sinks.TryGetValue(action.Kind, out var sink))
+        {
+            sink.Execute(action);
         }
     }
 

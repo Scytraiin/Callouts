@@ -1,5 +1,6 @@
 using System;
 using System.Numerics;
+using System.Text.RegularExpressions;
 
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
@@ -10,34 +11,37 @@ using Callouts.Core.Rules;
 namespace Callouts.Windows;
 
 /// <summary>
-/// The main Rules window: a list of rules plus a non-modal editor pane. Issue 002 covers
-/// chat-contains rules with an Echo output; later issues extend the editor per source kind
-/// and add sound/toast, scoping, bulk operations, and the create-from-event flow.
+/// The main Rules window: a list of rules plus a non-modal editor pane. Covers chat rules
+/// (contains + regex), placeholders, and Echo/Sound/Toast outputs with a live tester and
+/// output previews.
 /// </summary>
 public sealed class RulesWindow : Window, IDisposable
 {
+    private static readonly Vector4 ErrorColor = new(0.9f, 0.4f, 0.4f, 1f);
+    private static readonly Vector4 OkColor = new(0.4f, 0.85f, 0.45f, 1f);
+
     private readonly Configuration configuration;
+    private readonly RuleEngine engine;
     private readonly Action saveConfiguration;
+    private readonly Action<AlertAction> previewAction;
 
-    // Editor working copy. Non-null while creating or editing; edits never touch the live
-    // rule until Save (the engine only ever reads saved config).
     private Rule? draft;
-
-    // Id of the existing rule being edited; null while creating a new rule.
     private string? editingId;
-
     private bool focusPatternNextFrame;
+    private string testerInput = string.Empty;
     private string? statusMessage;
 
-    public RulesWindow(Configuration configuration, Action saveConfiguration)
+    public RulesWindow(Configuration configuration, RuleEngine engine, Action saveConfiguration, Action<AlertAction> previewAction)
         : base("Callouts — Rules###CalloutsRules")
     {
         this.configuration = configuration;
+        this.engine = engine;
         this.saveConfiguration = saveConfiguration;
+        this.previewAction = previewAction;
 
         this.SizeConstraints = new WindowSizeConstraints
         {
-            MinimumSize = new Vector2(560, 420),
+            MinimumSize = new Vector2(580, 460),
             MaximumSize = new Vector2(float.MaxValue, float.MaxValue),
         };
     }
@@ -80,15 +84,16 @@ public sealed class RulesWindow : Window, IDisposable
             return;
         }
 
-        if (!ImGui.BeginTable("rules", 4, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.Resizable))
+        if (!ImGui.BeginTable("rules", 5, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.Resizable))
         {
             return;
         }
 
         ImGui.TableSetupColumn("On", ImGuiTableColumnFlags.WidthFixed, 32f);
         ImGui.TableSetupColumn("Name");
-        ImGui.TableSetupColumn("Source", ImGuiTableColumnFlags.WidthFixed, 120f);
-        ImGui.TableSetupColumn("Actions", ImGuiTableColumnFlags.WidthFixed, 130f);
+        ImGui.TableSetupColumn("Source", ImGuiTableColumnFlags.WidthFixed, 110f);
+        ImGui.TableSetupColumn("Fires", ImGuiTableColumnFlags.WidthFixed, 48f);
+        ImGui.TableSetupColumn("Actions", ImGuiTableColumnFlags.WidthFixed, 140f);
         ImGui.TableHeadersRow();
 
         Rule? ruleToDelete = null;
@@ -98,7 +103,6 @@ public sealed class RulesWindow : Window, IDisposable
             ImGui.TableNextRow();
             ImGui.PushID(rule.Id);
 
-            // Enabled = user intent; toggling saves immediately.
             ImGui.TableNextColumn();
             var enabled = rule.Enabled;
             if (ImGui.Checkbox("##enabled", ref enabled))
@@ -109,11 +113,21 @@ public sealed class RulesWindow : Window, IDisposable
 
             ImGui.TableNextColumn();
             ImGui.TextUnformatted(string.IsNullOrWhiteSpace(rule.Name) ? "(unnamed)" : rule.Name);
+            this.DrawStateBadge(rule);
 
             ImGui.TableNextColumn();
             ImGui.TextUnformatted(DescribeSource(rule));
 
             ImGui.TableNextColumn();
+            ImGui.TextUnformatted(this.engine.GetFireCount(rule.Id).ToString());
+
+            ImGui.TableNextColumn();
+            if (ImGui.SmallButton("Test"))
+            {
+                this.TestFire(rule);
+            }
+
+            ImGui.SameLine();
             if (ImGui.SmallButton("Edit"))
             {
                 this.BeginEdit(rule);
@@ -143,12 +157,33 @@ public sealed class RulesWindow : Window, IDisposable
         }
     }
 
+    private void DrawStateBadge(Rule rule)
+    {
+        var state = this.engine.GetRuntimeState(rule);
+        switch (state)
+        {
+            case RuleRuntimeState.RuleError:
+                ImGui.SameLine();
+                ImGui.TextColored(ErrorColor, "⛔");
+                if (ImGui.IsItemHovered() && this.engine.TryGetError(rule.Id, out var message))
+                {
+                    ImGui.SetTooltip(message);
+                }
+
+                break;
+
+            case RuleRuntimeState.DisabledByUser:
+                ImGui.SameLine();
+                ImGui.TextDisabled("(off)");
+                break;
+        }
+    }
+
     private void DrawEditor()
     {
         var d = this.draft!;
         ImGui.TextUnformatted(this.editingId is null ? "New rule" : "Edit rule");
 
-        // Name
         var name = d.Name;
         if (ImGui.InputText("Name", ref name, 128))
         {
@@ -163,14 +198,10 @@ public sealed class RulesWindow : Window, IDisposable
 
         ImGui.Separator();
         ImGui.TextDisabled("WHEN");
-
-        // Source is fixed to Chat in issue 002.
         ImGui.TextUnformatted("Source: Chat message");
 
-        // Channel multi-select.
         this.DrawChannelPicker(d.Source);
-
-        ImGui.TextDisabled("Match: contains (regex support arrives in a later release)");
+        this.DrawMatchModePicker(d.Source);
 
         var caseSensitive = d.Source.CaseSensitive;
         if (ImGui.Checkbox("Case sensitive", ref caseSensitive))
@@ -178,6 +209,7 @@ public sealed class RulesWindow : Window, IDisposable
             d.Source.CaseSensitive = caseSensitive;
         }
 
+        var patternLabel = d.Source.MatchMode == MatchMode.Regex ? "Pattern (regex)" : "Text contains";
         var pattern = d.Source.Pattern;
         if (this.focusPatternNextFrame)
         {
@@ -185,9 +217,14 @@ public sealed class RulesWindow : Window, IDisposable
             this.focusPatternNextFrame = false;
         }
 
-        if (ImGui.InputTextWithHint("Text contains", "e.g. has initiated a ready check", ref pattern, 512))
+        if (ImGui.InputTextWithHint(patternLabel, "e.g. has initiated a ready check", ref pattern, 512))
         {
             d.Source.Pattern = pattern;
+        }
+
+        if (d.Source.MatchMode == MatchMode.Regex)
+        {
+            ImGui.TextDisabled("Capture groups are available as $1..$9 in output text.");
         }
 
         var sender = d.Source.SenderPattern ?? string.Empty;
@@ -196,28 +233,20 @@ public sealed class RulesWindow : Window, IDisposable
             d.Source.SenderPattern = string.IsNullOrWhiteSpace(sender) ? null : sender;
         }
 
+        this.DrawLiveTester(d);
+
         ImGui.Separator();
-        ImGui.TextDisabled("THEN");
+        ImGui.TextDisabled("THEN  (placeholders: {sender}, {message}, $1..$9)");
 
-        var echoEnabled = d.Outputs.Echo.Enabled;
-        if (ImGui.Checkbox("Echo", ref echoEnabled))
-        {
-            d.Outputs.Echo.Enabled = echoEnabled;
-        }
-
-        var echoText = d.Outputs.Echo.Text;
-        if (ImGui.InputTextWithHint("Echo text", "text shown in your Echo channel", ref echoText, 512))
-        {
-            d.Outputs.Echo.Text = echoText;
-        }
+        this.DrawEchoOutput(d);
+        this.DrawSoundOutput(d);
+        this.DrawToastOutput(d);
 
         ImGui.Separator();
 
-        // Inline validation — reasons are always shown; Save never silently no-ops.
-        var errors = RuleValidator.Validate(d);
-        foreach (var error in errors)
+        foreach (var error in RuleValidator.Validate(d))
         {
-            ImGui.TextColored(new Vector4(0.9f, 0.4f, 0.4f, 1f), $"⚠ {error}");
+            ImGui.TextColored(ErrorColor, $"⚠ {error}");
         }
 
         if (ImGui.Button("Save rule"))
@@ -234,7 +263,159 @@ public sealed class RulesWindow : Window, IDisposable
         if (!string.IsNullOrEmpty(this.statusMessage))
         {
             ImGui.SameLine();
-            ImGui.TextColored(new Vector4(0.4f, 0.85f, 0.45f, 1f), this.statusMessage);
+            ImGui.TextColored(OkColor, this.statusMessage);
+        }
+    }
+
+    private void DrawMatchModePicker(SourceSpec source)
+    {
+        var preview = source.MatchMode == MatchMode.Regex ? "Regex" : "Contains";
+        if (!ImGui.BeginCombo("Match", preview))
+        {
+            return;
+        }
+
+        if (ImGui.Selectable("Contains", source.MatchMode == MatchMode.Contains))
+        {
+            source.MatchMode = MatchMode.Contains;
+        }
+
+        if (ImGui.Selectable("Regex", source.MatchMode == MatchMode.Regex))
+        {
+            source.MatchMode = MatchMode.Regex;
+        }
+
+        ImGui.EndCombo();
+    }
+
+    private void DrawLiveTester(Rule d)
+    {
+        var sample = this.testerInput;
+        if (ImGui.InputTextWithHint("Try it", "paste a sample chat line", ref sample, 512))
+        {
+            this.testerInput = sample;
+        }
+
+        if (string.IsNullOrEmpty(this.testerInput) || string.IsNullOrEmpty(d.Source.Pattern))
+        {
+            return;
+        }
+
+        var channel = d.Source.Channels.Count > 0 ? d.Source.Channels[0] : 10; // Say
+        var evt = new TriggerEvent
+        {
+            Kind = TriggerKind.Chat,
+            Channel = channel,
+            Sender = "Tester",
+            Message = this.testerInput,
+        };
+
+        Regex? compiled = null;
+        if (d.Source.MatchMode == MatchMode.Regex)
+        {
+            if (!RegexFactory.TryCompile(d.Source.Pattern, d.Source.CaseSensitive, out compiled, out var regexError))
+            {
+                ImGui.TextColored(ErrorColor, $"✘ {regexError}");
+                return;
+            }
+        }
+
+        try
+        {
+            var result = ChatTriggerMatcher.Match(d, evt, compiled);
+            if (result is null)
+            {
+                ImGui.TextColored(ErrorColor, "✘ no match");
+            }
+            else
+            {
+                ImGui.TextColored(OkColor, result.Captures.Count > 0
+                    ? $"✔ match — captures: {string.Join(", ", result.Captures)}"
+                    : "✔ match");
+            }
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            ImGui.TextColored(ErrorColor, "✘ regex timed out (>50 ms)");
+        }
+    }
+
+    private void DrawEchoOutput(Rule d)
+    {
+        var echoEnabled = d.Outputs.Echo.Enabled;
+        if (ImGui.Checkbox("Echo", ref echoEnabled))
+        {
+            d.Outputs.Echo.Enabled = echoEnabled;
+        }
+
+        var echoText = d.Outputs.Echo.Text;
+        if (ImGui.InputTextWithHint("Echo text", "text shown in your Echo channel", ref echoText, 512))
+        {
+            d.Outputs.Echo.Text = echoText;
+        }
+    }
+
+    private void DrawSoundOutput(Rule d)
+    {
+        var soundEnabled = d.Outputs.Sound.Enabled;
+        if (ImGui.Checkbox("Sound", ref soundEnabled))
+        {
+            d.Outputs.Sound.Enabled = soundEnabled;
+        }
+
+        ImGui.SameLine();
+        if (ImGui.BeginCombo("##soundId", $"Effect {d.Outputs.Sound.EffectId}"))
+        {
+            for (var id = SoundOutput.MinEffectId; id <= SoundOutput.MaxEffectId; id++)
+            {
+                if (ImGui.Selectable($"Effect {id}", d.Outputs.Sound.EffectId == id))
+                {
+                    d.Outputs.Sound.EffectId = id;
+                }
+            }
+
+            ImGui.EndCombo();
+        }
+
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Preview##sound"))
+        {
+            this.previewAction(new AlertAction { Kind = AlertOutputKind.Sound, SoundEffectId = d.Outputs.Sound.EffectId });
+        }
+    }
+
+    private void DrawToastOutput(Rule d)
+    {
+        var toastEnabled = d.Outputs.Toast.Enabled;
+        if (ImGui.Checkbox("Toast", ref toastEnabled))
+        {
+            d.Outputs.Toast.Enabled = toastEnabled;
+        }
+
+        var toastText = d.Outputs.Toast.Text;
+        if (ImGui.InputTextWithHint("Toast text", "text shown on screen", ref toastText, 512))
+        {
+            d.Outputs.Toast.Text = toastText;
+        }
+
+        if (ImGui.BeginCombo("Style", d.Outputs.Toast.Style.ToString()))
+        {
+            foreach (ToastStyle style in Enum.GetValues<ToastStyle>())
+            {
+                if (ImGui.Selectable(style.ToString(), d.Outputs.Toast.Style == style))
+                {
+                    d.Outputs.Toast.Style = style;
+                }
+            }
+
+            ImGui.EndCombo();
+        }
+
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Test##toast"))
+        {
+            var text = string.IsNullOrEmpty(d.Outputs.Toast.Text) ? "Callouts test toast" : d.Outputs.Toast.Text;
+            this.previewAction(new AlertAction { Kind = AlertOutputKind.Toast, Text = text, ToastStyle = d.Outputs.Toast.Style });
         }
     }
 
@@ -249,8 +430,7 @@ public sealed class RulesWindow : Window, IDisposable
             return;
         }
 
-        var any = source.Channels.Count == 0;
-        if (ImGui.Selectable("Any channel", any))
+        if (ImGui.Selectable("Any channel", source.Channels.Count == 0))
         {
             source.Channels.Clear();
         }
@@ -279,6 +459,29 @@ public sealed class RulesWindow : Window, IDisposable
         ImGui.EndCombo();
     }
 
+    private void TestFire(Rule rule)
+    {
+        // Synthetic match with canned placeholder values; bypasses gates and fire counters.
+        var match = MatchResult.FromValues(
+            ("sender", "TestSender"),
+            ("message", "test message"));
+
+        foreach (var action in this.engine.BuildTestActions(rule, match))
+        {
+            this.previewAction(PrefixTest(action));
+        }
+
+        this.statusMessage = $"Test-fired \"{rule.Name}\".";
+    }
+
+    private static AlertAction PrefixTest(AlertAction action)
+        => action.Kind switch
+        {
+            AlertOutputKind.Echo => action with { Text = $"[test] {action.Text}" },
+            AlertOutputKind.Toast => action with { Text = $"[test] {action.Text}" },
+            _ => action,
+        };
+
     private void BeginCreate()
     {
         this.draft = new Rule
@@ -289,6 +492,7 @@ public sealed class RulesWindow : Window, IDisposable
         };
         this.editingId = null;
         this.focusPatternNextFrame = true;
+        this.testerInput = string.Empty;
         this.statusMessage = null;
     }
 
@@ -297,6 +501,7 @@ public sealed class RulesWindow : Window, IDisposable
         this.draft = rule.Clone();
         this.editingId = rule.Id;
         this.focusPatternNextFrame = true;
+        this.testerInput = string.Empty;
         this.statusMessage = null;
     }
 
@@ -345,8 +550,9 @@ public sealed class RulesWindow : Window, IDisposable
             return rule.Source.Kind.ToString();
         }
 
+        var mode = rule.Source.MatchMode == MatchMode.Regex ? "re" : "∋";
         return rule.Source.Channels.Count == 0
-            ? "Chat · any"
-            : $"Chat · {rule.Source.Channels.Count} ch";
+            ? $"Chat {mode} · any"
+            : $"Chat {mode} · {rule.Source.Channels.Count}ch";
     }
 }

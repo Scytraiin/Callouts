@@ -32,7 +32,7 @@ public sealed class ChatTriggerMatcherTests
             ChatEvent("Krile has initiated a READY CHECK."));
 
         Assert.NotNull(result);
-        Assert.Equal("Krile has initiated a READY CHECK.", result!.Message);
+        Assert.Equal("Krile has initiated a READY CHECK.", result!.Values["message"]);
     }
 
     [Fact]
