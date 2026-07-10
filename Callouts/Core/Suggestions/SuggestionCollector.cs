@@ -160,22 +160,31 @@ public sealed class SuggestionCollector
         TriggerKind.Status when evt.StatusGained && evt.IsDebuff && (evt.BearerIsSelf || evt.BearerInParty)
             => $"status:{evt.StatusId}:{(evt.BearerIsSelf ? "self" : "party")}",
 
-        _ => null, // advanced kinds handled in issue 021
+        // Advanced tier (issue 021): head markers on self / party. Only reached when the advanced
+        // source is running, so advanced-off/failed naturally produces no advanced suggestions.
+        TriggerKind.HeadMarker when (evt.TargetIsSelf || evt.TargetInParty) && MarkerValue(evt).Length > 0
+            => $"marker:{MarkerValue(evt)}:{(evt.TargetIsSelf ? "self" : "party")}",
+
+        _ => null,
     };
+
+    private static string MarkerValue(TriggerEvent evt)
+        => string.IsNullOrEmpty(evt.MarkerKey) ? evt.RawValue : evt.MarkerKey;
 
     private static Candidate NewCandidate(string key, TriggerEvent evt) => new()
     {
         Key = key,
         Kind = evt.Kind,
-        Id = evt.Kind == TriggerKind.Cast ? evt.ActionId : evt.StatusId,
-        IsSelf = evt.Kind == TriggerKind.Cast ? evt.TargetIsSelf : evt.BearerIsSelf,
-        InParty = evt.Kind == TriggerKind.Cast ? evt.TargetInParty : evt.BearerInParty,
+        Id = evt.Kind switch { TriggerKind.Cast => evt.ActionId, TriggerKind.Status => evt.StatusId, _ => 0 },
+        IsSelf = evt.Kind == TriggerKind.Status ? evt.BearerIsSelf : evt.TargetIsSelf,
+        InParty = evt.Kind == TriggerKind.Status ? evt.BearerInParty : evt.TargetInParty,
     };
 
     private static bool TargetedMe(TriggerEvent evt) => evt.Kind switch
     {
         TriggerKind.Cast => evt.TargetIsSelf,
         TriggerKind.Status => evt.BearerIsSelf,
+        TriggerKind.HeadMarker => evt.TargetIsSelf,
         _ => false,
     };
 
@@ -200,6 +209,11 @@ public sealed class SuggestionCollector
                 candidate.DurationSeconds = evt.DurationSeconds;
             }
         }
+        else if (evt.Kind == TriggerKind.HeadMarker)
+        {
+            candidate.MarkerKey = MarkerValue(evt);
+            candidate.Name = candidate.MarkerKey;
+        }
     }
 
     // ---- building ----
@@ -207,9 +221,12 @@ public sealed class SuggestionCollector
     private static Suggestion Build(Candidate c, IReadOnlyList<Rule> rules)
     {
         var name = ResolveName(c);
-        var category = c.Kind == TriggerKind.Cast
-            ? SuggestionCategory.EnemyCasts
-            : c.IsSelf ? SuggestionCategory.DebuffsOnYou : SuggestionCategory.PartyEffects;
+        var category = c.Kind switch
+        {
+            TriggerKind.Cast => SuggestionCategory.EnemyCasts,
+            TriggerKind.HeadMarker or TriggerKind.Vfx => SuggestionCategory.Markers,
+            _ => c.IsSelf ? SuggestionCategory.DebuffsOnYou : SuggestionCategory.PartyEffects,
+        };
 
         return new Suggestion
         {
@@ -262,7 +279,12 @@ public sealed class SuggestionCollector
             return c.Name;
         }
 
-        return c.Kind == TriggerKind.Cast ? $"Action {c.Id}" : $"Status {c.Id}";
+        return c.Kind switch
+        {
+            TriggerKind.Cast => $"Action {c.Id}",
+            TriggerKind.Status => $"Status {c.Id}",
+            _ => string.IsNullOrEmpty(c.MarkerKey) ? "Marker" : c.MarkerKey,
+        };
     }
 
     private static string TitleFor(Candidate c, string name) => c.Kind switch
@@ -270,6 +292,8 @@ public sealed class SuggestionCollector
         TriggerKind.Cast => $"Enemy casts \"{name}\"",
         TriggerKind.Status when c.IsSelf => $"You gain \"{name}\"",
         TriggerKind.Status => $"Party gains \"{name}\"",
+        TriggerKind.HeadMarker when c.IsSelf => $"Marker \"{name}\" on you",
+        TriggerKind.HeadMarker => $"Marker \"{name}\" on party",
         _ => name,
     };
 
@@ -294,6 +318,12 @@ public sealed class SuggestionCollector
             StatusChange = StatusChangeFilter.Gained,
             Bearer = c.IsSelf ? BearerScope.Self : BearerScope.Party,
         },
+        TriggerKind.HeadMarker => new SourceSpec
+        {
+            Kind = TriggerKind.HeadMarker,
+            MarkerKey = c.MarkerKey,
+            ActorScope = c.IsSelf ? BearerScope.Self : BearerScope.Party,
+        },
         _ => new SourceSpec { Kind = c.Kind },
     };
 
@@ -303,6 +333,7 @@ public sealed class SuggestionCollector
         {
             TriggerKind.Cast => "{caster} casts {action}!",
             TriggerKind.Status => "{status} on {bearer}!",
+            TriggerKind.HeadMarker => "{marker}!",
             _ => $"{name}!",
         };
 
@@ -322,6 +353,8 @@ public sealed class SuggestionCollector
             {
                 TriggerKind.Cast => rule.Source.ActionId == 0 || rule.Source.ActionId == c.Id,
                 TriggerKind.Status => rule.Source.StatusId == 0 || rule.Source.StatusId == c.Id,
+                TriggerKind.HeadMarker => string.IsNullOrEmpty(rule.Source.MarkerKey)
+                    || string.Equals(rule.Source.MarkerKey, c.MarkerKey, StringComparison.OrdinalIgnoreCase),
                 _ => false,
             };
 

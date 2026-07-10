@@ -95,6 +95,14 @@ public sealed class SuggestionsWindow : Window, IDisposable
             var inCategory = suggestions.Where(s => s.Category == category).ToList();
             if (inCategory.Count == 0)
             {
+                // Markers need the advanced tier; hint the user when it's off and empty.
+                if (category == SuggestionCategory.Markers && !this.configuration.Options.AdvancedSourcesEnabled)
+                {
+                    ImGui.TextDisabled(category.ToUpperInvariant());
+                    ImGui.TextColored(DimColor, "   Enable advanced sources in Settings to get marker suggestions.");
+                    ImGui.Spacing();
+                }
+
                 continue;
             }
 

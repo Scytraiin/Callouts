@@ -165,6 +165,53 @@ public sealed class SuggestionsTests
         Assert.True(RuleValidator.IsValid(rule));
     }
 
+    private static TriggerEvent Marker(string key = "spread", string raw = "", bool self = true, bool party = false)
+        => new() { Kind = TriggerKind.HeadMarker, MarkerKey = key, RawValue = raw, TargetIsSelf = self, TargetInParty = party };
+
+    [Fact]
+    public void HeadMarker_Named_Aggregates_AsAdvancedMarkerCategory()
+    {
+        var c = new SuggestionCollector();
+        c.Observe(Marker(key: "spread", self: true));
+        c.Observe(Marker(key: "spread", self: true));
+
+        var s = Assert.Single(c.GetSuggestions(NoRules, NoneIgnored));
+        Assert.Equal(SuggestionCategory.Markers, s.Category);
+        Assert.True(s.Advanced);
+        Assert.Equal(TriggerKind.HeadMarker, s.ProposedSource.Kind);
+        Assert.Equal("spread", s.ProposedSource.MarkerKey);
+        Assert.Contains("spread", s.Title);
+    }
+
+    [Fact]
+    public void HeadMarker_RawFallback_WhenNoNamedKey()
+    {
+        var c = new SuggestionCollector();
+        c.Observe(Marker(key: string.Empty, raw: "vfx/lockon/eff/unknown", self: true));
+
+        var s = Assert.Single(c.GetSuggestions(NoRules, NoneIgnored));
+        Assert.Equal("vfx/lockon/eff/unknown", s.ProposedSource.MarkerKey);
+    }
+
+    [Fact]
+    public void HeadMarker_OnStranger_IsIgnored()
+    {
+        var c = new SuggestionCollector();
+        c.Observe(Marker(key: "spread", self: false, party: false));
+
+        Assert.Empty(c.GetSuggestions(NoRules, NoneIgnored));
+    }
+
+    [Fact]
+    public void HeadMarker_CoveredByExistingRule()
+    {
+        var c = new SuggestionCollector();
+        c.Observe(Marker(key: "spread", self: true));
+
+        var rules = new List<Rule> { new() { Source = new SourceSpec { Kind = TriggerKind.HeadMarker, MarkerKey = "spread" } } };
+        Assert.True(Assert.Single(c.GetSuggestions(rules, NoneIgnored)).Covered);
+    }
+
     [Fact]
     public void Scorer_DangerSignals_RaiseScore()
     {
