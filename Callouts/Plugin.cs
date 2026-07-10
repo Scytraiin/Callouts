@@ -31,9 +31,12 @@ public sealed class Plugin : IDalamudPlugin
 
     private readonly WindowSystem windowSystem = new("Callouts");
     private readonly RulesWindow rulesWindow;
+    private readonly LiveEventsWindow eventsWindow;
+    private readonly SettingsWindow settingsWindow;
     private readonly Configuration configuration;
 
     private readonly RuleEngine engine;
+    private readonly EventBuffer eventBuffer;
     private readonly List<ITriggerSource> sources = [];
     private readonly Dictionary<AlertOutputKind, IAlertSink> sinks;
 
@@ -92,12 +95,26 @@ public sealed class Plugin : IDalamudPlugin
         this.currentZone = this.ResolveZoneName(this.clientState.TerritoryType);
         this.clientState.TerritoryChanged += this.OnTerritoryChanged;
 
-        this.rulesWindow = new RulesWindow(this.configuration, this.engine, this.configuration.Save, this.ExecuteAction);
+        this.eventBuffer = new EventBuffer(this.configuration.Options.EventBufferSize);
+
+        this.eventsWindow = new LiveEventsWindow(this.eventBuffer, this.engine, this.CreateRuleFromEvent);
+        this.settingsWindow = new SettingsWindow(this.configuration, this.engine, this.eventBuffer, this.configuration.Save, this.OnAdvancedToggled);
+        this.rulesWindow = new RulesWindow(
+            this.configuration,
+            this.engine,
+            this.configuration.Save,
+            this.ExecuteAction,
+            () => this.eventsWindow.IsOpen = true,
+            () => this.settingsWindow.IsOpen = true,
+            () => (this.clientState.TerritoryType, this.currentZone));
+
         this.windowSystem.AddWindow(this.rulesWindow);
+        this.windowSystem.AddWindow(this.eventsWindow);
+        this.windowSystem.AddWindow(this.settingsWindow);
 
         this.commandManager.AddHandler(CommandName, new CommandInfo(this.OnCommand)
         {
-            HelpMessage = "Toggle the Callouts rules window.",
+            HelpMessage = "Open Callouts. Subcommands: on, off, config, events.",
         });
 
         this.pluginInterface.UiBuilder.Draw += this.DrawUi;
@@ -131,6 +148,23 @@ public sealed class Plugin : IDalamudPlugin
 
         this.windowSystem.RemoveAllWindows();
         this.rulesWindow.Dispose();
+        this.eventsWindow.Dispose();
+        this.settingsWindow.Dispose();
+    }
+
+    private void CreateRuleFromEvent(TriggerEvent evt) => this.rulesWindow.BeginCreateFromEvent(evt);
+
+    private void OnAdvancedToggled(bool enabled)
+    {
+        // Advanced sources are wired in issue 014; persisting the toggle is enough for now.
+        this.log.Information("Callouts: advanced sources {State}.", enabled ? "enabled" : "disabled");
+    }
+
+    private void SetMasterEnabled(bool enabled)
+    {
+        this.engine.MasterEnabled = enabled;
+        this.configuration.Options.MasterEnabled = enabled;
+        this.configuration.Save();
     }
 
     private Configuration LoadConfiguration(out string? notice)
@@ -189,6 +223,14 @@ public sealed class Plugin : IDalamudPlugin
             InDuty = this.condition[ConditionFlag.BoundByDuty],
         };
 
+        this.eventBuffer.Add(new EventRecord
+        {
+            Kind = enriched.Kind,
+            Display = EventFormatter.Describe(enriched),
+            Time = DateTime.Now.ToString("HH:mm:ss"),
+            Event = enriched,
+        });
+
         IReadOnlyList<AlertAction> actions;
         try
         {
@@ -237,7 +279,26 @@ public sealed class Plugin : IDalamudPlugin
 
     private void OnCommand(string command, string args)
     {
-        this.rulesWindow.IsOpen = !this.rulesWindow.IsOpen;
+        switch (args.Trim().ToLowerInvariant())
+        {
+            case "on":
+                this.SetMasterEnabled(true);
+                break;
+            case "off":
+                this.SetMasterEnabled(false);
+                break;
+            case "config":
+            case "settings":
+                this.settingsWindow.IsOpen = true;
+                break;
+            case "events":
+            case "debug":
+                this.eventsWindow.IsOpen = true;
+                break;
+            default:
+                this.rulesWindow.IsOpen = !this.rulesWindow.IsOpen;
+                break;
+        }
     }
 
     private void DrawUi()

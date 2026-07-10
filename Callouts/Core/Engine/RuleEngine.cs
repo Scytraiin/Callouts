@@ -58,6 +58,11 @@ public sealed class RuleEngine
                 continue;
             }
 
+            if (!ScopeMatcher.InScope(rule.Scope, evt))
+            {
+                continue;
+            }
+
             var match = this.TryMatch(rule, evt);
             if (match is null)
             {

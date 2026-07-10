@@ -15,6 +15,9 @@ public sealed class GlobalOptions
     /// <summary>Global alert rate limit (alerts/second).</summary>
     public double RateLimitPerSecond { get; set; } = 10;
 
+    /// <summary>Default cooldown (seconds) applied to newly created rules.</summary>
+    public double DefaultCooldownSeconds { get; set; } = 2.0;
+
     /// <summary>Live-events ring buffer size (issue 010).</summary>
     public int EventBufferSize { get; set; } = 200;
 }

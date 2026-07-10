@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace Callouts.Core.Rules;
 
@@ -19,6 +20,11 @@ public sealed class Rule
 
     public OutputSpec Outputs { get; set; } = new();
 
+    public RuleScope Scope { get; set; } = new();
+
+    /// <summary>Optional user tags for filtering/grouping large collections (issue 013).</summary>
+    public List<string> Tags { get; set; } = [];
+
     public double CooldownSeconds { get; set; } = 2.0;
 
     /// <summary>Deep copy preserving <see cref="Id"/> (used for the editor's working copy).</summary>
@@ -29,6 +35,8 @@ public sealed class Rule
         Enabled = this.Enabled,
         Source = this.Source.Clone(),
         Outputs = this.Outputs.Clone(),
+        Scope = this.Scope.Clone(),
+        Tags = [.. this.Tags],
         CooldownSeconds = this.CooldownSeconds,
     };
 }

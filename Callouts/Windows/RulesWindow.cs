@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Numerics;
 using System.Text.RegularExpressions;
 
@@ -11,19 +12,23 @@ using Callouts.Core.Rules;
 namespace Callouts.Windows;
 
 /// <summary>
-/// The main Rules window: a list of rules plus a non-modal editor pane. Covers chat rules
-/// (contains + regex), placeholders, and Echo/Sound/Toast outputs with a live tester and
-/// output previews.
+/// The main Rules window: filterable list + non-modal editor pane. Covers all stable sources,
+/// placeholders, Echo/Sound/Toast outputs, scoping, bulk operations with undo, master enable,
+/// status badges, and create-rule-from-event.
 /// </summary>
 public sealed class RulesWindow : Window, IDisposable
 {
     private static readonly Vector4 ErrorColor = new(0.9f, 0.4f, 0.4f, 1f);
     private static readonly Vector4 OkColor = new(0.4f, 0.85f, 0.45f, 1f);
+    private static readonly Vector4 WarnColor = new(0.95f, 0.75f, 0.35f, 1f);
 
     private readonly Configuration configuration;
     private readonly RuleEngine engine;
     private readonly Action saveConfiguration;
     private readonly Action<AlertAction> previewAction;
+    private readonly Action openEvents;
+    private readonly Action openSettings;
+    private readonly Func<(uint Id, string Name)> currentZone;
 
     private Rule? draft;
     private string? editingId;
@@ -31,17 +36,35 @@ public sealed class RulesWindow : Window, IDisposable
     private string testerInput = string.Empty;
     private string? statusMessage;
 
-    public RulesWindow(Configuration configuration, RuleEngine engine, Action saveConfiguration, Action<AlertAction> previewAction)
+    // Filters
+    private string search = string.Empty;
+    private TriggerKind? sourceFilter;
+    private bool enabledOnly;
+
+    // Undo of the last delete (bulk or single)
+    private readonly List<(int Index, Rule Rule)> lastDeleted = new();
+
+    public RulesWindow(
+        Configuration configuration,
+        RuleEngine engine,
+        Action saveConfiguration,
+        Action<AlertAction> previewAction,
+        Action openEvents,
+        Action openSettings,
+        Func<(uint Id, string Name)> currentZone)
         : base("Callouts — Rules###CalloutsRules")
     {
         this.configuration = configuration;
         this.engine = engine;
         this.saveConfiguration = saveConfiguration;
         this.previewAction = previewAction;
+        this.openEvents = openEvents;
+        this.openSettings = openSettings;
+        this.currentZone = currentZone;
 
         this.SizeConstraints = new WindowSizeConstraints
         {
-            MinimumSize = new Vector2(580, 460),
+            MinimumSize = new Vector2(600, 480),
             MaximumSize = new Vector2(float.MaxValue, float.MaxValue),
         };
     }
@@ -50,8 +73,28 @@ public sealed class RulesWindow : Window, IDisposable
     {
     }
 
+    /// <summary>Opens the editor pre-filled from a Live-events entry (issue 010).</summary>
+    public void BeginCreateFromEvent(TriggerEvent evt)
+    {
+        var rule = new Rule
+        {
+            Name = SuggestName(evt),
+            CooldownSeconds = this.configuration.Options.DefaultCooldownSeconds,
+            Source = BuildSourceFromEvent(evt),
+            Outputs = new OutputSpec { Echo = new EchoOutput { Enabled = true, Text = SuggestEchoText(evt) } },
+        };
+
+        this.draft = rule;
+        this.editingId = null;
+        this.focusPatternNextFrame = true;
+        this.testerInput = evt.Kind == TriggerKind.Chat ? evt.Message : string.Empty;
+        this.statusMessage = null;
+        this.IsOpen = true;
+    }
+
     public override void Draw()
     {
+        this.DrawBanners();
         this.DrawToolbar();
         ImGui.Separator();
         this.DrawRuleList();
@@ -63,6 +106,32 @@ public sealed class RulesWindow : Window, IDisposable
         }
     }
 
+    private void DrawBanners()
+    {
+        if (!this.engine.MasterEnabled)
+        {
+            ImGui.TextColored(WarnColor, "Callouts is globally disabled.");
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Turn on"))
+            {
+                this.engine.MasterEnabled = true;
+                this.configuration.Options.MasterEnabled = true;
+                this.saveConfiguration();
+            }
+        }
+
+        var inactive = this.CountNeedsAttention();
+        if (inactive > 0)
+        {
+            ImGui.TextColored(WarnColor, $"⚠ {inactive} rule(s) need attention.");
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Open Settings"))
+            {
+                this.openSettings();
+            }
+        }
+    }
+
     private void DrawToolbar()
     {
         if (ImGui.Button("＋ New rule"))
@@ -71,20 +140,76 @@ public sealed class RulesWindow : Window, IDisposable
         }
 
         ImGui.SameLine();
-        ImGui.TextDisabled($"{this.configuration.Rules.Count} rule(s)");
+        if (ImGui.Button("👁 Watch events"))
+        {
+            this.openEvents();
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("⚙ Settings"))
+        {
+            this.openSettings();
+        }
+
+        // Filters
+        var searchText = this.search;
+        ImGui.SetNextItemWidth(180);
+        if (ImGui.InputTextWithHint("##search", "Search name…", ref searchText, 128))
+        {
+            this.search = searchText;
+        }
+
+        ImGui.SameLine();
+        this.DrawSourceFilter();
+
+        ImGui.SameLine();
+        var enabled = this.enabledOnly;
+        if (ImGui.Checkbox("Enabled only", ref enabled))
+        {
+            this.enabledOnly = enabled;
+        }
+    }
+
+    private void DrawSourceFilter()
+    {
+        var label = this.sourceFilter is null ? "All sources" : this.sourceFilter.Value.ToString();
+        ImGui.SetNextItemWidth(140);
+        if (!ImGui.BeginCombo("##sourcefilter", label))
+        {
+            return;
+        }
+
+        if (ImGui.Selectable("All sources", this.sourceFilter is null))
+        {
+            this.sourceFilter = null;
+        }
+
+        foreach (var kind in new[] { TriggerKind.Chat, TriggerKind.Cast, TriggerKind.Status, TriggerKind.DutyEvent, TriggerKind.Vfx, TriggerKind.HeadMarker })
+        {
+            if (ImGui.Selectable(kind.ToString(), this.sourceFilter == kind))
+            {
+                this.sourceFilter = kind;
+            }
+        }
+
+        ImGui.EndCombo();
     }
 
     private void DrawRuleList()
     {
+        var shown = RuleListView.Filter(this.configuration.Rules, this.search, this.sourceFilter, this.enabledOnly);
+
         if (this.configuration.Rules.Count == 0)
         {
             ImGui.Spacing();
-            ImGui.TextWrapped("No rules yet. Click \"＋ New rule\" to create your first one — for example, echo a reminder when a party member starts a ready check.");
+            ImGui.TextWrapped("No rules yet. Click \"＋ New rule\", or open \"👁 Watch events\" and click ＋ on any line to build a rule from it.");
             ImGui.Spacing();
             return;
         }
 
-        if (!ImGui.BeginTable("rules", 5, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.Resizable))
+        this.DrawBulkBar(shown);
+
+        if (!ImGui.BeginTable("rules", 5, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.Resizable | ImGuiTableFlags.ScrollY))
         {
             return;
         }
@@ -93,12 +218,12 @@ public sealed class RulesWindow : Window, IDisposable
         ImGui.TableSetupColumn("Name");
         ImGui.TableSetupColumn("Source", ImGuiTableColumnFlags.WidthFixed, 110f);
         ImGui.TableSetupColumn("Fires", ImGuiTableColumnFlags.WidthFixed, 48f);
-        ImGui.TableSetupColumn("Actions", ImGuiTableColumnFlags.WidthFixed, 140f);
+        ImGui.TableSetupColumn("Actions", ImGuiTableColumnFlags.WidthFixed, 150f);
         ImGui.TableHeadersRow();
 
         Rule? ruleToDelete = null;
 
-        foreach (var rule in this.configuration.Rules)
+        foreach (var rule in shown)
         {
             ImGui.TableNextRow();
             ImGui.PushID(rule.Id);
@@ -134,7 +259,7 @@ public sealed class RulesWindow : Window, IDisposable
             }
 
             ImGui.SameLine();
-            if (ImGui.SmallButton("Delete"))
+            if (ImGui.SmallButton("Del"))
             {
                 ruleToDelete = rule;
             }
@@ -146,14 +271,48 @@ public sealed class RulesWindow : Window, IDisposable
 
         if (ruleToDelete is not null)
         {
-            this.configuration.Rules.Remove(ruleToDelete);
-            this.saveConfiguration();
-            if (this.editingId == ruleToDelete.Id)
+            this.DeleteRules(new[] { ruleToDelete });
+        }
+    }
+
+    private void DrawBulkBar(IReadOnlyList<Rule> shown)
+    {
+        ImGui.TextDisabled($"Showing {shown.Count} of {this.configuration.Rules.Count}.");
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Enable shown"))
+        {
+            foreach (var rule in shown)
             {
-                this.CancelEdit();
+                rule.Enabled = true;
             }
 
-            this.statusMessage = $"Deleted \"{ruleToDelete.Name}\".";
+            this.saveConfiguration();
+        }
+
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Disable shown"))
+        {
+            foreach (var rule in shown)
+            {
+                rule.Enabled = false;
+            }
+
+            this.saveConfiguration();
+        }
+
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Delete shown"))
+        {
+            this.DeleteRules(shown);
+        }
+
+        if (this.lastDeleted.Count > 0)
+        {
+            ImGui.SameLine();
+            if (ImGui.SmallButton($"Undo delete ({this.lastDeleted.Count})"))
+            {
+                this.UndoDelete();
+            }
         }
     }
 
@@ -168,6 +327,26 @@ public sealed class RulesWindow : Window, IDisposable
                 if (ImGui.IsItemHovered() && this.engine.TryGetError(rule.Id, out var message))
                 {
                     ImGui.SetTooltip(message);
+                }
+
+                break;
+
+            case RuleRuntimeState.BlockedAdvancedOff:
+                ImGui.SameLine();
+                ImGui.TextColored(WarnColor, "⚠");
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("Blocked — advanced sources are off (see Settings).");
+                }
+
+                break;
+
+            case RuleRuntimeState.SourceFailed:
+                ImGui.SameLine();
+                ImGui.TextColored(ErrorColor, "⚠");
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("Blocked — source failed (game patch?). See Settings.");
                 }
 
                 break;
@@ -218,13 +397,15 @@ public sealed class RulesWindow : Window, IDisposable
 
         ImGui.Separator();
         ImGui.TextDisabled($"THEN  (placeholders: {PlaceholderHint(d.Source.Kind)})");
-
         this.DrawEchoOutput(d);
         this.DrawSoundOutput(d);
         this.DrawToastOutput(d);
 
         ImGui.Separator();
+        ImGui.TextDisabled("OPTIONS");
+        this.DrawOptions(d);
 
+        ImGui.Separator();
         foreach (var error in RuleValidator.Validate(d))
         {
             ImGui.TextColored(ErrorColor, $"⚠ {error}");
@@ -245,6 +426,60 @@ public sealed class RulesWindow : Window, IDisposable
         {
             ImGui.SameLine();
             ImGui.TextColored(OkColor, this.statusMessage);
+        }
+    }
+
+    private void DrawOptions(Rule d)
+    {
+        var cooldown = (float)d.CooldownSeconds;
+        if (ImGui.InputFloat("Cooldown (sec)", ref cooldown))
+        {
+            d.CooldownSeconds = Math.Clamp(cooldown, 0f, 3600f);
+        }
+
+        var onlyCombat = d.Scope.OnlyInCombat;
+        if (ImGui.Checkbox("Only in combat", ref onlyCombat))
+        {
+            d.Scope.OnlyInCombat = onlyCombat;
+        }
+
+        ImGui.SameLine();
+        var onlyDuty = d.Scope.OnlyInDuty;
+        if (ImGui.Checkbox("Only in duty", ref onlyDuty))
+        {
+            d.Scope.OnlyInDuty = onlyDuty;
+        }
+
+        // Zone restriction
+        if (d.Scope.TerritoryIds.Count == 0)
+        {
+            ImGui.TextDisabled("Zones: everywhere");
+        }
+        else
+        {
+            ImGui.TextDisabled($"Zones: {d.Scope.TerritoryIds.Count} restricted");
+        }
+
+        var zone = this.currentZone();
+        if (zone.Id != 0)
+        {
+            ImGui.SameLine();
+            if (ImGui.SmallButton($"Add current ({zone.Name})"))
+            {
+                if (!d.Scope.TerritoryIds.Contains(zone.Id))
+                {
+                    d.Scope.TerritoryIds.Add(zone.Id);
+                }
+            }
+        }
+
+        if (d.Scope.TerritoryIds.Count > 0)
+        {
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Clear zones"))
+            {
+                d.Scope.TerritoryIds.Clear();
+            }
         }
     }
 
@@ -374,7 +609,6 @@ public sealed class RulesWindow : Window, IDisposable
 
     private static void DrawDutyWhen(SourceSpec s)
     {
-        // Only the events the DutyEventSource emits are offered.
         var options = new[] { DutyEventFilter.Any, DutyEventFilter.Wiped, DutyEventFilter.Recommenced };
         if (!ImGui.BeginCombo("Duty event", s.DutyEvent.ToString()))
         {
@@ -411,24 +645,6 @@ public sealed class RulesWindow : Window, IDisposable
         ImGui.EndCombo();
     }
 
-    private static string SourceKindLabel(TriggerKind kind) => kind switch
-    {
-        TriggerKind.Chat => "Chat message",
-        TriggerKind.Cast => "Enemy / actor cast",
-        TriggerKind.Status => "Status effect",
-        TriggerKind.DutyEvent => "Duty event",
-        _ => kind.ToString(),
-    };
-
-    private static string PlaceholderHint(TriggerKind kind) => kind switch
-    {
-        TriggerKind.Chat => "{sender}, {message}, {zone}, $1..$9",
-        TriggerKind.Cast => "{caster}, {action}, {zone}",
-        TriggerKind.Status => "{status}, {bearer}, {zone}",
-        TriggerKind.DutyEvent => "{event}, {zone}",
-        _ => "{zone}",
-    };
-
     private void DrawMatchModePicker(SourceSpec source)
     {
         var preview = source.MatchMode == MatchMode.Regex ? "Regex" : "Contains";
@@ -463,7 +679,7 @@ public sealed class RulesWindow : Window, IDisposable
             return;
         }
 
-        var channel = d.Source.Channels.Count > 0 ? d.Source.Channels[0] : 10; // Say
+        var channel = d.Source.Channels.Count > 0 ? d.Source.Channels[0] : 10;
         var evt = new TriggerEvent
         {
             Kind = TriggerKind.Chat,
@@ -485,16 +701,11 @@ public sealed class RulesWindow : Window, IDisposable
         try
         {
             var result = ChatTriggerMatcher.Match(d, evt, compiled);
-            if (result is null)
-            {
-                ImGui.TextColored(ErrorColor, "✘ no match");
-            }
-            else
-            {
-                ImGui.TextColored(OkColor, result.Captures.Count > 0
+            ImGui.TextColored(result is null ? ErrorColor : OkColor, result is null
+                ? "✘ no match"
+                : result.Captures.Count > 0
                     ? $"✔ match — captures: {string.Join(", ", result.Captures)}"
                     : "✔ match");
-            }
         }
         catch (RegexMatchTimeoutException)
         {
@@ -560,18 +771,9 @@ public sealed class RulesWindow : Window, IDisposable
             d.Outputs.Toast.Text = toastText;
         }
 
-        if (ImGui.BeginCombo("Style", d.Outputs.Toast.Style.ToString()))
-        {
-            foreach (ToastStyle style in Enum.GetValues<ToastStyle>())
-            {
-                if (ImGui.Selectable(style.ToString(), d.Outputs.Toast.Style == style))
-                {
-                    d.Outputs.Toast.Style = style;
-                }
-            }
-
-            ImGui.EndCombo();
-        }
+        var style = d.Outputs.Toast.Style;
+        EnumCombo("Style", ref style);
+        d.Outputs.Toast.Style = style;
 
         ImGui.SameLine();
         if (ImGui.SmallButton("Test##toast"))
@@ -623,11 +825,7 @@ public sealed class RulesWindow : Window, IDisposable
 
     private void TestFire(Rule rule)
     {
-        // Synthetic match with canned placeholder values; bypasses gates and fire counters.
-        var match = MatchResult.FromValues(
-            ("sender", "TestSender"),
-            ("message", "test message"));
-
+        var match = SyntheticMatch(rule.Source.Kind);
         foreach (var action in this.engine.BuildTestActions(rule, match))
         {
             this.previewAction(PrefixTest(action));
@@ -635,6 +833,14 @@ public sealed class RulesWindow : Window, IDisposable
 
         this.statusMessage = $"Test-fired \"{rule.Name}\".";
     }
+
+    private static MatchResult SyntheticMatch(TriggerKind kind) => kind switch
+    {
+        TriggerKind.Cast => MatchResult.FromValues(("caster", "TestCaster"), ("action", "TestAction"), ("zone", "TestZone")),
+        TriggerKind.Status => MatchResult.FromValues(("status", "TestStatus"), ("bearer", "You"), ("zone", "TestZone")),
+        TriggerKind.DutyEvent => MatchResult.FromValues(("event", "Wiped"), ("zone", "TestZone")),
+        _ => MatchResult.FromValues(("sender", "TestSender"), ("message", "test message"), ("zone", "TestZone")),
+    };
 
     private static AlertAction PrefixTest(AlertAction action)
         => action.Kind switch
@@ -649,6 +855,7 @@ public sealed class RulesWindow : Window, IDisposable
         this.draft = new Rule
         {
             Name = "New rule",
+            CooldownSeconds = this.configuration.Options.DefaultCooldownSeconds,
             Source = new SourceSpec { Kind = TriggerKind.Chat, MatchMode = MatchMode.Contains },
             Outputs = new OutputSpec { Echo = new EchoOutput { Enabled = true, Text = string.Empty } },
         };
@@ -705,16 +912,139 @@ public sealed class RulesWindow : Window, IDisposable
         this.statusMessage = $"Saved \"{savedName}\".";
     }
 
-    private static string DescribeSource(Rule rule)
+    private void DeleteRules(IReadOnlyList<Rule> rules)
     {
-        if (rule.Source.Kind != TriggerKind.Chat)
+        this.lastDeleted.Clear();
+        foreach (var rule in rules)
         {
-            return rule.Source.Kind.ToString();
+            var index = this.configuration.Rules.IndexOf(rule);
+            if (index >= 0)
+            {
+                this.lastDeleted.Add((index, rule));
+            }
         }
 
-        var mode = rule.Source.MatchMode == MatchMode.Regex ? "re" : "∋";
-        return rule.Source.Channels.Count == 0
-            ? $"Chat {mode} · any"
-            : $"Chat {mode} · {rule.Source.Channels.Count}ch";
+        // Remove from the highest index down so stored indices stay valid on undo.
+        this.lastDeleted.Sort((a, b) => b.Index.CompareTo(a.Index));
+        foreach (var (_, rule) in this.lastDeleted)
+        {
+            this.configuration.Rules.Remove(rule);
+            if (this.editingId == rule.Id)
+            {
+                this.CancelEdit();
+            }
+        }
+
+        this.saveConfiguration();
+        this.statusMessage = $"Deleted {this.lastDeleted.Count} rule(s).";
+    }
+
+    private void UndoDelete()
+    {
+        // Restore in ascending index order so positions line up.
+        var restore = new List<(int Index, Rule Rule)>(this.lastDeleted);
+        restore.Sort((a, b) => a.Index.CompareTo(b.Index));
+        foreach (var (index, rule) in restore)
+        {
+            var target = Math.Clamp(index, 0, this.configuration.Rules.Count);
+            this.configuration.Rules.Insert(target, rule);
+        }
+
+        this.lastDeleted.Clear();
+        this.saveConfiguration();
+        this.statusMessage = "Restored deleted rule(s).";
+    }
+
+    private int CountNeedsAttention()
+    {
+        var count = 0;
+        foreach (var rule in this.configuration.Rules)
+        {
+            var state = this.engine.GetRuntimeState(rule);
+            if (state is RuleRuntimeState.RuleError or RuleRuntimeState.SourceFailed or RuleRuntimeState.BlockedAdvancedOff)
+            {
+                count++;
+            }
+        }
+
+        return count;
+    }
+
+    private static SourceSpec BuildSourceFromEvent(TriggerEvent evt) => evt.Kind switch
+    {
+        TriggerKind.Chat => new SourceSpec
+        {
+            Kind = TriggerKind.Chat,
+            Channels = evt.Channel != 0 ? [evt.Channel] : [],
+            MatchMode = MatchMode.Contains,
+            Pattern = evt.Message,
+        },
+        TriggerKind.Cast => new SourceSpec { Kind = TriggerKind.Cast, ActionId = evt.ActionId, CasterScope = evt.CasterIsEnemy ? CasterScope.Enemy : CasterScope.Anyone },
+        TriggerKind.Status => new SourceSpec
+        {
+            Kind = TriggerKind.Status,
+            StatusId = evt.StatusId,
+            StatusChange = evt.StatusGained ? StatusChangeFilter.Gained : StatusChangeFilter.Removed,
+            Bearer = evt.BearerIsSelf ? BearerScope.Self : BearerScope.Anyone,
+        },
+        TriggerKind.DutyEvent => new SourceSpec { Kind = TriggerKind.DutyEvent, DutyEvent = evt.DutyEvent },
+        TriggerKind.Vfx => new SourceSpec { Kind = TriggerKind.Vfx, VfxPathPattern = evt.VfxPath, VfxMatchMode = MatchMode.Contains },
+        TriggerKind.HeadMarker => new SourceSpec { Kind = TriggerKind.HeadMarker, MarkerKey = string.IsNullOrEmpty(evt.MarkerKey) ? evt.RawValue : evt.MarkerKey },
+        _ => new SourceSpec { Kind = evt.Kind },
+    };
+
+    private static string SuggestName(TriggerEvent evt) => evt.Kind switch
+    {
+        TriggerKind.Chat => "Chat rule",
+        TriggerKind.Cast => string.IsNullOrEmpty(evt.ActionName) ? $"Cast {evt.ActionId}" : evt.ActionName,
+        TriggerKind.Status => string.IsNullOrEmpty(evt.StatusName) ? $"Status {evt.StatusId}" : evt.StatusName,
+        TriggerKind.DutyEvent => $"Duty {evt.DutyEvent}",
+        TriggerKind.Vfx => "VFX rule",
+        TriggerKind.HeadMarker => "Marker rule",
+        _ => "New rule",
+    };
+
+    private static string SuggestEchoText(TriggerEvent evt) => evt.Kind switch
+    {
+        TriggerKind.Cast => "{caster} casts {action}!",
+        TriggerKind.Status => "{status} on {bearer}!",
+        TriggerKind.DutyEvent => "{event}!",
+        _ => string.Empty,
+    };
+
+    private static string SourceKindLabel(TriggerKind kind) => kind switch
+    {
+        TriggerKind.Chat => "Chat message",
+        TriggerKind.Cast => "Enemy / actor cast",
+        TriggerKind.Status => "Status effect",
+        TriggerKind.DutyEvent => "Duty event",
+        _ => kind.ToString(),
+    };
+
+    private static string PlaceholderHint(TriggerKind kind) => kind switch
+    {
+        TriggerKind.Chat => "{sender}, {message}, {zone}, $1..$9",
+        TriggerKind.Cast => "{caster}, {action}, {zone}",
+        TriggerKind.Status => "{status}, {bearer}, {zone}",
+        TriggerKind.DutyEvent => "{event}, {zone}",
+        _ => "{zone}",
+    };
+
+    private static string DescribeSource(Rule rule)
+    {
+        switch (rule.Source.Kind)
+        {
+            case TriggerKind.Chat:
+                var mode = rule.Source.MatchMode == MatchMode.Regex ? "re" : "∋";
+                return rule.Source.Channels.Count == 0 ? $"Chat {mode}·any" : $"Chat {mode}·{rule.Source.Channels.Count}ch";
+            case TriggerKind.Cast:
+                return "Cast";
+            case TriggerKind.Status:
+                return "Status";
+            case TriggerKind.DutyEvent:
+                return "Duty";
+            default:
+                return rule.Source.Kind.ToString();
+        }
     }
 }
