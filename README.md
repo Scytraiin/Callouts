@@ -1,157 +1,135 @@
 # Callouts
 
-> **Draft README for the future plugin repository** — written at PRD stage.
-> Sections marked *(placeholder)* are filled in during implementation.
+Callouts is a Dalamud plugin for FFXIV that lets you build your own local alert
+rules. When a game event you care about happens, the plugin can respond with an
+Echo message, a sound effect, a toast, or any combination of the three.
 
-Workspace for the `Callouts` Dalamud plugin: user-defined trigger rules that turn
-in-game events into local alerts — Echo messages, sound effects, and toasts.
+The goal is simple: give players a flexible way to react to information already
+available in the client without writing scripts or installing fight-specific
+modules.
 
-**When something you care about happens, Callouts tells you.** No scripting, no
-per-fight modules: you define a rule in the UI ("when a chat line contains X",
-"when an enemy starts casting Y", "when a marker appears over my head") and pick
-what should happen (echo text with placeholders, one of the 16 alert sounds, a toast).
+Everything stays local. Callouts does not automate gameplay, does not send chat
+visible to other players, and does not transmit your data anywhere.
 
-Everything is local and read-only: Callouts never sends chat visible to others,
-never automates gameplay, and never transmits data anywhere.
+## What it does
+
+- Watch for chat and log lines, including contains and regex matching.
+- Watch for enemy cast starts, status gains and removals, and duty wipe or
+  recommence events.
+- Optionally watch advanced hook-based events such as actor VFX spawns and head
+  markers.
+- Turn matching events into Echo lines, sounds, and toasts.
+- Let you create rules directly from a live event feed instead of manually
+  hunting ids and paths.
+- Import, export, and share rule packs safely.
+
+## Typical uses
+
+- Alert on a ready check, countdown, or wipe.
+- Warn when a specific boss cast starts.
+- Notify when food falls off.
+- Highlight head markers or other visual mechanics for your own character or
+  party.
+- Build personal reminders from chat lines, macros, or combat events.
 
 ## Features
 
-- **Trigger sources**
-  - *Stable tier (always available)*: chat/log lines (contains or regex, with capture
-    groups), enemy cast starts, status effects gained/removed (on you, your party
-    members, or your current target), duty wipe/recommence events.
-  - *Advanced tier (opt-in toggle)*: VFX spawns on actors and head markers (e.g.
-    spread/stack icons over players). These use game-function hooks and can break on
-    game patches — see [Upgrade path](#upgrade-path).
-- **Outputs, per rule**: Echo message (placeholders like `{sender}`, `{action}`, `$1`),
-  game sound effect 1–16, on-screen toast (Normal/Quest/Error) — any combination.
-- **Live events**: a live window showing candidate events with one-click
-  **"create rule from this event"** — you never have to look up an action id or VFX path.
-- **Safety rails**: rules can never trigger on the plugin's own Echo output; per-rule
-  cooldowns and a global rate limit prevent spam; a broken regex disables only its rule
-  (your on/off choices are never overwritten by the plugin).
-- **Sharing**: export/import rules as clipboard strings, with duplicate-safe updates
-  of shared rule packs. A starter-rule pack (ready check, countdown, food expiry) can
-  be imported with one click.
+### Trigger sources
 
-**Known limitations (by design, v1):** the stable cast trigger only sees actions
-*with a cast bar* — instant abilities are invisible to it (an advanced "action used"
-trigger is on the roadmap). And because the plugin's own output lives in the Echo
-channel (which is excluded from matching to prevent feedback loops), rules cannot
-trigger on your own `/echo` macros.
+- Chat and log lines
+- Enemy cast starts
+- Status gained or removed on self, party, target, or anyone depending on rule
+  scope
+- Duty wipe and recommence events
+- Advanced sources for VFX spawns and head markers
+
+### Outputs
+
+- Echo text with placeholders such as `{sender}`, `{action}`, `{status}`, and
+  regex capture groups like `$1`
+- Sound effects `1` through `16`
+- Toast notifications in Normal, Quest, or Error style
+
+### Rule authoring
+
+- A rules window for creating, editing, duplicating, bulk-enabling, and
+  disabling rules
+- A live events window with one-click "create rule from this event"
+- Per-rule cooldowns and a global rate limit
+- Import and export support for sharing packs
+- A starter pack for common quality-of-life alerts
 
 ## Commands
 
 ```text
-/callouts          # rules window
-/callouts config   # settings (incl. Advanced sources toggle)
-/callouts events   # live events window (/callouts debug works as alias)
+/callouts          Open the rules window
+/callouts config   Open settings
+/callouts events   Open the live events window
 ```
 
 ## Installation
 
-1. Add the custom repository to Dalamud (Settings → Experimental → Custom Plugin
-   Repositories):
+1. Open Dalamud settings and add this custom repository:
    `https://raw.githubusercontent.com/Scytraiin/MyDalamudPlugins/main/pluginmaster.json`
-2. Search for **Callouts** in the Plugin Installer and install.
+2. Open the Plugin Installer.
+3. Search for `Callouts`.
+4. Install or update normally through Dalamud.
 
-### Release status
+## Notes and limitations
 
-- Current plugin version: `1.0.0`
-- the current release target is `v1.0.0`
+- The stable cast trigger only sees actions with a cast bar. Instant abilities
+  are not visible to that source.
+- The plugin's own Echo output is excluded from matching to prevent feedback
+  loops, so rules cannot trigger on the plugin's own messages or your own
+  `/echo` macros.
+- Stable sources rely on documented Dalamud APIs and are expected to remain the
+  most resilient across patches.
+- Advanced sources use game-function hooks and can break on patch days. If an
+  advanced source fails, it disables itself and the rest of the plugin keeps
+  working.
 
-## Upgrade path
+## Configuration safety
 
-### How updates reach you
-Releases are published as GitHub Releases (`latest.zip`) and picked up automatically
-through the custom repository. Your rules live in the plugin configuration and are
-**migrated automatically** between versions: the config carries a version number, and
-**before any migration your old config is backed up on disk** — an upgrade (or even a
-downgrade, which is refused safely) can never silently lose rules.
+Rules are stored in the plugin configuration and migrated forward when the
+schema changes. When the stored config version differs from the running plugin
+version, the original file is backed up before migration runs. Downgrades are
+refused safely instead of risking silent data loss.
 
-### Staged feature roadmap
-| Stage | Version | What you get |
-|---|---|---|
-| Alpha | v0.1.x | Chat triggers + Echo output, core UI |
-| Alpha | v0.2.x | Cast, status & duty-event triggers, sounds, toasts, placeholders, Live events window |
-| Beta | v0.3.x | Advanced tier: VFX & head-marker triggers behind the opt-in toggle |
-| Stable | v1.0 | Import/export, zone scoping, bulk operations, starter-rule pack, polish |
-| Later | v1.x+ | Tether triggers, "action used" trigger for instant casts (advanced), TTS output (candidate), localized UI (candidate) |
+## Development
 
-### Game-patch behavior (important for the Advanced tier)
-- **Stable-tier sources** (chat, casts, status, duty events) use documented Dalamud
-  APIs and keep working across game patches once the plugin is built for the current
-  Dalamud API level.
-- **Advanced-tier sources** rely on memory signatures that a game patch can invalidate.
-  When that happens they **disable themselves automatically** — the plugin keeps
-  running, and you get **one clear in-game notice at login** (an Echo line + error
-  toast naming the failed source and how many rules are affected), so you find out
-  before a pull, not during one. Affected rules are flagged ⚠ in the rule list; your
-  enabled/disabled choices are untouched. A plugin update restores them automatically.
-- If you want maximum patch-day robustness, simply leave the Advanced sources toggle
-  off — the stable tier is unaffected by design.
+This repository contains the plugin, its test project, and release metadata.
 
-## Local validation & build
+- `Callouts/` - main plugin project
+- `Callouts.Tests/` - xUnit tests for the Dalamud-free core
+- `scyt.repo.json` - custom repository entry metadata
+- `scripts/prepare_release.py` - release preparation helper
 
-The Docker workflow keeps validation reproducible without a host .NET install.
-Unit tests gate the build: the image will not produce a plugin package unless the
-full test suite passes.
+### Local validation
+
+The Docker workflow runs the test suite first and only builds plugin artifacts
+when the tests pass.
 
 ```bash
 docker build -t callouts-ci .
-docker run --rm callouts-ci                            # tests only
+docker run --rm callouts-ci
 docker run --rm \
   -v "/path/to/your/Hooks/dev:/dalamud:ro" \
-  -v "$PWD/out:/out" callouts-ci                       # tests + plugin build
+  -v "$PWD/out:/out" \
+  callouts-ci
 ```
 
-Releases are prepared with `scripts/prepare_release.py --workspace . --version vX.Y.Z
---dalamud-dev-path /path/to/Hooks/dev`, which syncs all version metadata, rebuilds,
-and verifies the packaged artifacts.
+### Release workflow
 
-## Implementation status
+Release prep is handled by `scripts/prepare_release.py`. It updates version
+metadata, rebuilds through Docker, and refreshes the packaged output in `out/`.
 
-All trigger sources, outputs, the rule engine, config safety, live events, import/export,
-and the starter pack are implemented and covered by the unit-test suite (run in the Docker
-gate). Two items require the live game and are intentionally left for maintainer bring-up:
-
-- **VFX/head-marker signature** — the advanced-tier hook signature is empty in source
-  control on purpose; it must be filled and verified against the running client. Until then
-  the advanced sources report *Failed* and the login notice fires (by design).
-- **In-game acceptance pass** — the checklist below can only be run on a Windows FFXIV client.
-
-## Maintainer release checklist (HITL)
-
-These steps are performed by the maintainer; nothing here is automated or published by the
-build:
-
-1. Run the in-game checklist below on a live client; fix or file follow-ups.
-2. Fill and verify the advanced-tier VFX signature; confirm marker mapping paths.
-3. Bump the version (`scripts/prepare_release.py --version vX.Y.Z --dalamud-dev-path …`),
-   which syncs `Callouts.csproj` / `scyt.repo.json` / README and rebuilds via Docker.
-4. Tag and create the GitHub release with `out/release/latest.zip`.
-5. Add the third entry to `MyDalamudPlugins/pluginmaster.json` and verify a clean install.
-
-## Manual in-game test checklist
-
-- [ ] Chat rule fires on a party message; does not fire on its own Echo output
-- [ ] Cast rule fires once per cast — and fires **again** when the boss recasts the
-      same spell back-to-back
-- [ ] Status rule fires on food expiry
-- [ ] Sound preview and toast test buttons work in the editor; test output is
-      `[test]`-prefixed
-- [ ] Advanced toggle installs/removes hooks (health indicators change)
-- [ ] Simulated hook failure blocks only that source and shows the login notice;
-      rule checkboxes remain as the user set them
-
-## Project layout
-
-- `Callouts/` — the Dalamud plugin (Dalamud API 15, .NET 10)
-- `Callouts.Tests/` — xUnit v3 tests for the Dalamud-free core
-- `scyt.repo.json` — custom Dalamud repository metadata
-- `release-notes/` — per-release notes used for GitHub releases
-- `PRD.md`, `DESIGN.md` — product requirements and design proposal
+```bash
+python3 scripts/prepare_release.py \
+  --workspace . \
+  --version vX.Y.Z \
+  --dalamud-dev-path /path/to/Hooks/dev
+```
 
 ## License
 
-AGPL-3.0 — see [LICENSE.md](LICENSE.md).
+AGPL-3.0. See [LICENSE.md](LICENSE.md).
