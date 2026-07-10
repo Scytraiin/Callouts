@@ -13,6 +13,7 @@ using Lumina.Excel.Sheets;
 using Callouts.Core.Config;
 using Callouts.Core.Engine;
 using Callouts.Core.Rules;
+using Callouts.Core.Suggestions;
 using Callouts.Sinks;
 using Callouts.Sources;
 using Callouts.Windows;
@@ -34,10 +35,12 @@ public sealed class Plugin : IDalamudPlugin
     private readonly RulesWindow rulesWindow;
     private readonly LiveEventsWindow eventsWindow;
     private readonly SettingsWindow settingsWindow;
+    private readonly SuggestionsWindow suggestionsWindow;
     private readonly Configuration configuration;
 
     private readonly RuleEngine engine;
     private readonly EventBuffer eventBuffer;
+    private readonly SuggestionCollector suggestionCollector = new();
     private readonly List<ITriggerSource> sources = [];
     private readonly VfxSource vfxSource;
     private readonly Dictionary<AlertOutputKind, IAlertSink> sinks;
@@ -113,6 +116,7 @@ public sealed class Plugin : IDalamudPlugin
         this.eventsWindow = new LiveEventsWindow(this.eventBuffer, this.engine, this.CreateRuleFromEvent);
         this.settingsWindow = new SettingsWindow(this.configuration, this.engine, this.eventBuffer, this.configuration.Save, this.OnAdvancedToggled);
         this.settingsWindow.SetAdvancedHealthProvider(this.DescribeAdvancedHealth);
+        this.suggestionsWindow = new SuggestionsWindow(this.suggestionCollector, this.configuration, this.CreateRuleFromSuggestion);
         this.rulesWindow = new RulesWindow(
             this.configuration,
             this.engine,
@@ -120,11 +124,13 @@ public sealed class Plugin : IDalamudPlugin
             this.ExecuteAction,
             () => this.eventsWindow.IsOpen = true,
             () => this.settingsWindow.IsOpen = true,
+            () => this.suggestionsWindow.IsOpen = true,
             () => (this.clientState.TerritoryType, this.currentZone));
 
         this.windowSystem.AddWindow(this.rulesWindow);
         this.windowSystem.AddWindow(this.eventsWindow);
         this.windowSystem.AddWindow(this.settingsWindow);
+        this.windowSystem.AddWindow(this.suggestionsWindow);
 
         this.commandManager.AddHandler(CommandName, new CommandInfo(this.OnCommand)
         {
@@ -167,9 +173,12 @@ public sealed class Plugin : IDalamudPlugin
         this.rulesWindow.Dispose();
         this.eventsWindow.Dispose();
         this.settingsWindow.Dispose();
+        this.suggestionsWindow.Dispose();
     }
 
     private void CreateRuleFromEvent(TriggerEvent evt) => this.rulesWindow.BeginCreateFromEvent(evt);
+
+    private void CreateRuleFromSuggestion(Suggestion suggestion) => this.rulesWindow.BeginCreateFromSuggestion(suggestion);
 
     private void OnAdvancedToggled(bool enabled)
     {
@@ -315,6 +324,8 @@ public sealed class Plugin : IDalamudPlugin
             Event = enriched,
         });
 
+        this.suggestionCollector.Observe(enriched);
+
         IReadOnlyList<AlertAction> actions;
         try
         {
@@ -378,6 +389,10 @@ public sealed class Plugin : IDalamudPlugin
             case "events":
             case "debug":
                 this.eventsWindow.IsOpen = true;
+                break;
+            case "suggestions":
+            case "suggest":
+                this.suggestionsWindow.IsOpen = true;
                 break;
             default:
                 this.rulesWindow.IsOpen = !this.rulesWindow.IsOpen;

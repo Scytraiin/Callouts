@@ -28,6 +28,7 @@ public sealed class RulesWindow : Window, IDisposable
     private readonly Action<AlertAction> previewAction;
     private readonly Action openEvents;
     private readonly Action openSettings;
+    private readonly Action openSuggestions;
     private readonly Func<(uint Id, string Name)> currentZone;
 
     private Rule? draft;
@@ -57,6 +58,7 @@ public sealed class RulesWindow : Window, IDisposable
         Action<AlertAction> previewAction,
         Action openEvents,
         Action openSettings,
+        Action openSuggestions,
         Func<(uint Id, string Name)> currentZone)
         : base("Callouts — Rules###CalloutsRules")
     {
@@ -66,6 +68,7 @@ public sealed class RulesWindow : Window, IDisposable
         this.previewAction = previewAction;
         this.openEvents = openEvents;
         this.openSettings = openSettings;
+        this.openSuggestions = openSuggestions;
         this.currentZone = currentZone;
 
         this.SizeConstraints = new WindowSizeConstraints
@@ -94,6 +97,17 @@ public sealed class RulesWindow : Window, IDisposable
         this.editingId = null;
         this.focusPatternNextFrame = evt.Kind == TriggerKind.Chat;
         this.testerInput = evt.Kind == TriggerKind.Chat ? evt.Message : string.Empty;
+        this.statusMessage = null;
+        this.IsOpen = true;
+    }
+
+    /// <summary>Opens the editor pre-filled from a Suggestions-tab proposal (issue 018).</summary>
+    public void BeginCreateFromSuggestion(Callouts.Core.Suggestions.Suggestion suggestion)
+    {
+        this.draft = suggestion.ToRule();
+        this.editingId = null;
+        this.focusPatternNextFrame = this.draft.Source.Kind == TriggerKind.Chat;
+        this.testerInput = string.Empty;
         this.statusMessage = null;
         this.IsOpen = true;
     }
@@ -150,6 +164,12 @@ public sealed class RulesWindow : Window, IDisposable
         if (ImGui.Button("👁 Watch events"))
         {
             this.openEvents();
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("💡 Suggestions"))
+        {
+            this.openSuggestions();
         }
 
         ImGui.SameLine();

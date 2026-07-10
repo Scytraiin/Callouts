@@ -33,3 +33,14 @@ public enum DutyEventFilter
     Recommenced,
     Completed,
 }
+
+/// <summary>Coarse AoE shape derived from the Lumina Action sheet (issue 019, Suggestions).</summary>
+public enum AoeShape
+{
+    None,
+    Single,
+    Circle,
+    Cone,
+    Line,
+    Donut,
+}
