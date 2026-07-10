@@ -1,0 +1,16 @@
+<Project Sdk="Dalamud.NET.Sdk/15.0.0">
+  <PropertyGroup>
+    <AssemblyName>Callouts</AssemblyName>
+    <Authors>ScytRaiin</Authors>
+    <Version>0.1.0</Version>
+    <AssemblyVersion>0.1.0.0</AssemblyVersion>
+    <FileVersion>0.1.0.0</FileVersion>
+    <Description>User-defined trigger rules that turn in-game events into local alerts: Echo messages, sound effects, and toasts.</Description>
+    <PackageProjectUrl>https://github.com/Scytraiin/Callouts</PackageProjectUrl>
+    <IsPackable>false</IsPackable>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+</Project>

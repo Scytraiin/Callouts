@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    paths:
+      - ".github/workflows/**"
+      - ".dockerignore"
+      - "Dockerfile"
+      - "README.md"
+      - "scyt.repo.json"
+      - "Callouts/**"
+      - "Callouts.Tests/**"
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+      - ".dockerignore"
+      - "Dockerfile"
+      - "README.md"
+      - "scyt.repo.json"
+      - "Callouts/**"
+      - "Callouts.Tests/**"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore test project
+        run: dotnet restore Callouts.Tests/Callouts.Tests.csproj
+
+      - name: Run tests
+        run: dotnet test Callouts.Tests/Callouts.Tests.csproj --no-restore --configuration Release
+
+  docker-smoke:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Build Docker validation image
+        run: docker build -t callouts-ci .

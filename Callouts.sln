@@ -1,0 +1,25 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Callouts", "Callouts\Callouts.csproj", "{7C2A1E52-9B3D-4F6A-8E01-D4B5C6A7F812}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Callouts.Tests", "Callouts.Tests\Callouts.Tests.csproj", "{3F8B0D14-6A2C-45E9-B7D3-91C0E5F4A626}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{7C2A1E52-9B3D-4F6A-8E01-D4B5C6A7F812}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7C2A1E52-9B3D-4F6A-8E01-D4B5C6A7F812}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7C2A1E52-9B3D-4F6A-8E01-D4B5C6A7F812}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7C2A1E52-9B3D-4F6A-8E01-D4B5C6A7F812}.Release|Any CPU.Build.0 = Release|Any CPU
+		{3F8B0D14-6A2C-45E9-B7D3-91C0E5F4A626}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3F8B0D14-6A2C-45E9-B7D3-91C0E5F4A626}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3F8B0D14-6A2C-45E9-B7D3-91C0E5F4A626}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3F8B0D14-6A2C-45E9-B7D3-91C0E5F4A626}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal

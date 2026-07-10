@@ -1,0 +1,16 @@
+{
+  "Author": "ScytRaiin",
+  "Name": "Callouts",
+  "Punchline": "When something you care about happens, Callouts tells you.",
+  "Description": "User-defined trigger rules that turn in-game events into local alerts - Echo messages, sound effects, and toasts. Rules are configured entirely in the UI; everything stays on your machine. Licensed under AGPL-3.0.",
+  "RepoUrl": "https://github.com/Scytraiin/Callouts",
+  "IconUrl": "https://raw.githubusercontent.com/Scytraiin/Callouts/master/images/icon.png",
+  "InternalName": "Callouts",
+  "ApplicableVersion": "any",
+  "Tags": [
+    "utility",
+    "alerts",
+    "triggers",
+    "quality-of-life"
+  ]
+}

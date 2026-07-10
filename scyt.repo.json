@@ -1,0 +1,23 @@
+[
+  {
+    "Author": "ScytRaiin",
+    "Name": "Callouts",
+    "Description": "User-defined trigger rules that turn in-game events into local alerts - Echo messages, sound effects, and toasts. Rules are configured entirely in the UI; everything stays on your machine.",
+    "Punchline": "When something you care about happens, Callouts tells you.",
+    "InternalName": "Callouts",
+    "AssemblyVersion": "0.1.0.0",
+    "TestingAssemblyVersion": "0.1.0.0",
+    "RepoUrl": "https://github.com/Scytraiin/Callouts",
+    "IconUrl": "https://raw.githubusercontent.com/Scytraiin/Callouts/master/images/icon.png",
+    "ApplicableVersion": "any",
+    "DalamudApiLevel": 15,
+    "IsHide": false,
+    "IsTestingExclusive": false,
+    "LastUpdate": 1783641600,
+    "DownloadCount": 0,
+    "DownloadLinkInstall": "https://github.com/Scytraiin/Callouts/releases/download/v0.1.0-alpha/latest.zip",
+    "DownloadLinkTesting": "https://github.com/Scytraiin/Callouts/releases/download/v0.1.0-alpha/latest.zip",
+    "DownloadLinkUpdate": "https://github.com/Scytraiin/Callouts/releases/download/v0.1.0-alpha/latest.zip",
+    "Changelog": "Callouts 0.1.0-alpha release."
+  }
+]
