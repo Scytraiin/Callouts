@@ -41,6 +41,9 @@ public sealed record TriggerEvent
     public bool CasterIsEnemy { get; init; }
     public bool TargetIsSelf { get; init; }
     public bool TargetInParty { get; init; }
+    public double CastTimeSeconds { get; init; }          // enrichment (issue 019)
+    public AoeShape AoeShape { get; init; } = AoeShape.None;
+    public double AoeRange { get; init; }
 
     // --- Status ---
     public int StatusId { get; init; }
@@ -51,6 +54,8 @@ public sealed record TriggerEvent
     public bool BearerIsSelf { get; init; }
     public bool BearerInParty { get; init; }
     public bool BearerIsTarget { get; init; }
+    public bool IsDebuff { get; init; }                   // enrichment (issue 019)
+    public double DurationSeconds { get; init; }
 
     // --- Duty ---
     public DutyEventFilter DutyEvent { get; init; } = DutyEventFilter.Any;

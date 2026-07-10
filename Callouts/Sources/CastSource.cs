@@ -8,6 +8,7 @@ using Dalamud.Plugin.Services;
 using LuminaAction = Lumina.Excel.Sheets.Action;
 
 using Callouts.Core.Engine;
+using Callouts.Core.Rules;
 
 namespace Callouts.Sources;
 
@@ -28,8 +29,10 @@ public sealed class CastSource : ITriggerSource
 
     private readonly Dictionary<ulong, uint> activeCasts = new();
     private readonly HashSet<ulong> seenThisSweep = new();
-    private readonly Dictionary<uint, string> actionNameCache = new();
+    private readonly Dictionary<uint, ActionInfo> actionCache = new();
     private bool started;
+
+    private readonly record struct ActionInfo(string Name, AoeShape Shape, double Range);
 
     public CastSource(IObjectTable objectTable, IFramework framework, IPartyList partyList, IDataManager dataManager, IClientState clientState, IPluginLog log)
     {
@@ -124,16 +127,20 @@ public sealed class CastSource : ITriggerSource
     {
         var targetId = chara.CastTargetObjectId;
         var targetName = targetId != 0 ? this.objectTable.SearchById(targetId)?.Name.TextValue ?? string.Empty : string.Empty;
+        var info = this.ResolveAction(actionId);
 
         this.OnEvent?.Invoke(new TriggerEvent
         {
             Kind = TriggerKind.Cast,
             ActionId = (int)actionId,
-            ActionName = this.ResolveActionName(actionId),
+            ActionName = info.Name,
             CasterName = chara.Name.TextValue,
             CasterIsEnemy = chara.ObjectKind == ObjectKind.BattleNpc,
             TargetIsSelf = targetId != 0 && targetId == localId,
             TargetInParty = !string.IsNullOrEmpty(targetName) && partyNames.Contains(targetName),
+            CastTimeSeconds = chara.TotalCastTime,
+            AoeShape = info.Shape,
+            AoeRange = info.Range,
         });
     }
 
@@ -174,20 +181,31 @@ public sealed class CastSource : ITriggerSource
         return names;
     }
 
-    private string ResolveActionName(uint actionId)
+    private ActionInfo ResolveAction(uint actionId)
     {
-        if (this.actionNameCache.TryGetValue(actionId, out var cached))
+        if (this.actionCache.TryGetValue(actionId, out var cached))
         {
             return cached;
         }
 
-        var name = string.Empty;
+        var info = new ActionInfo(string.Empty, AoeShape.None, 0);
         if (this.dataManager.GetExcelSheet<LuminaAction>().TryGetRow(actionId, out var row))
         {
-            name = row.Name.ExtractText();
+            info = new ActionInfo(row.Name.ExtractText(), MapShape(row.CastType), row.EffectRange);
         }
 
-        this.actionNameCache[actionId] = name;
-        return name;
+        this.actionCache[actionId] = info;
+        return info;
     }
+
+    // FFXIV Action.CastType → coarse AoE shape (best-effort; a maintained mapping).
+    private static AoeShape MapShape(byte castType) => castType switch
+    {
+        1 => AoeShape.Single,
+        2 or 5 or 7 => AoeShape.Circle,
+        3 or 13 => AoeShape.Cone,
+        4 or 8 or 12 => AoeShape.Line,
+        10 => AoeShape.Donut,
+        _ => AoeShape.None,
+    };
 }

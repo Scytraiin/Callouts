@@ -25,11 +25,15 @@ public sealed class StatusSource : ITriggerSource
     private readonly IClientState clientState;
     private readonly IPluginLog log;
 
-    // actorId -> (statusId -> stacks) from the previous sweep.
-    private readonly Dictionary<ulong, Dictionary<uint, int>> previous = new();
+    // actorId -> (statusId -> snapshot) from the previous sweep.
+    private readonly Dictionary<ulong, Dictionary<uint, StatusSnap>> previous = new();
     private readonly HashSet<ulong> seenThisSweep = new();
-    private readonly Dictionary<uint, string> statusNameCache = new();
+    private readonly Dictionary<uint, StatusInfo> statusCache = new();
     private bool started;
+
+    private readonly record struct StatusSnap(int Stacks, float Remaining);
+
+    private readonly record struct StatusInfo(string Name, bool IsDebuff);
 
     public StatusSource(
         IObjectTable objectTable,
@@ -129,7 +133,7 @@ public sealed class StatusSource : ITriggerSource
 
     private void DiffActor(IBattleChara chara, ulong id, bool isSelf, bool inParty, bool isTarget)
     {
-        var current = new Dictionary<uint, int>();
+        var current = new Dictionary<uint, StatusSnap>();
         foreach (var status in chara.StatusList)
         {
             if (status is null || status.StatusId == 0)
@@ -137,7 +141,7 @@ public sealed class StatusSource : ITriggerSource
                 continue;
             }
 
-            current[status.StatusId] = status.Param;
+            current[status.StatusId] = new StatusSnap(status.Param, status.RemainingTime);
         }
 
         if (!this.previous.TryGetValue(id, out var prior))
@@ -148,11 +152,11 @@ public sealed class StatusSource : ITriggerSource
             return;
         }
 
-        foreach (var (statusId, stacks) in current)
+        foreach (var (statusId, snap) in current)
         {
             if (!prior.ContainsKey(statusId))
             {
-                this.Emit(chara, statusId, stacks, gained: true, isSelf, inParty, isTarget);
+                this.Emit(chara, statusId, snap.Stacks, snap.Remaining, gained: true, isSelf, inParty, isTarget);
             }
         }
 
@@ -160,26 +164,29 @@ public sealed class StatusSource : ITriggerSource
         {
             if (!current.ContainsKey(statusId))
             {
-                this.Emit(chara, statusId, 0, gained: false, isSelf, inParty, isTarget);
+                this.Emit(chara, statusId, 0, 0, gained: false, isSelf, inParty, isTarget);
             }
         }
 
         this.previous[id] = current;
     }
 
-    private void Emit(IBattleChara chara, uint statusId, int stacks, bool gained, bool isSelf, bool inParty, bool isTarget)
+    private void Emit(IBattleChara chara, uint statusId, int stacks, float remaining, bool gained, bool isSelf, bool inParty, bool isTarget)
     {
+        var info = this.ResolveStatus(statusId);
         this.OnEvent?.Invoke(new TriggerEvent
         {
             Kind = TriggerKind.Status,
             StatusId = (int)statusId,
-            StatusName = this.ResolveStatusName(statusId),
+            StatusName = info.Name,
             StatusGained = gained,
             Stacks = stacks,
             BearerName = chara.Name.TextValue,
             BearerIsSelf = isSelf,
             BearerInParty = inParty,
             BearerIsTarget = isTarget,
+            IsDebuff = info.IsDebuff,
+            DurationSeconds = remaining,
         });
     }
 
@@ -220,20 +227,21 @@ public sealed class StatusSource : ITriggerSource
         return names;
     }
 
-    private string ResolveStatusName(uint statusId)
+    private StatusInfo ResolveStatus(uint statusId)
     {
-        if (this.statusNameCache.TryGetValue(statusId, out var cached))
+        if (this.statusCache.TryGetValue(statusId, out var cached))
         {
             return cached;
         }
 
-        var name = string.Empty;
+        var info = new StatusInfo(string.Empty, false);
         if (this.dataManager.GetExcelSheet<Status>().TryGetRow(statusId, out var row))
         {
-            name = row.Name.ExtractText();
+            // StatusCategory: 1 = beneficial (buff), 2 = detrimental (debuff).
+            info = new StatusInfo(row.Name.ExtractText(), row.StatusCategory == 2);
         }
 
-        this.statusNameCache[statusId] = name;
-        return name;
+        this.statusCache[statusId] = info;
+        return info;
     }
 }

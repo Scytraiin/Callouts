@@ -34,6 +34,9 @@ public sealed record Suggestion
 
     public string Rationale { get; init; } = string.Empty;
 
+    /// <summary>Danger hint like "4.0s cast · Circle 8y" or "debuff · 9s" (issue 019).</summary>
+    public string Hint { get; init; } = string.Empty;
+
     public string Category { get; init; } = string.Empty;
 
     public int Score { get; init; }

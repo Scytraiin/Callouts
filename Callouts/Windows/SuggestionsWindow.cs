@@ -94,9 +94,12 @@ public sealed class SuggestionsWindow : Window, IDisposable
         ImGui.PushID(suggestion.Key);
 
         var stars = new string('★', suggestion.Stars) + new string('☆', 5 - suggestion.Stars);
+        var rationale = string.IsNullOrEmpty(suggestion.Hint)
+            ? suggestion.Rationale
+            : $"{suggestion.Rationale} · {suggestion.Hint}";
         ImGui.TextUnformatted($"{suggestion.Title}");
         ImGui.SameLine();
-        ImGui.TextColored(DimColor, $"{stars}  {suggestion.Rationale}");
+        ImGui.TextColored(DimColor, $"{stars}  {rationale}");
 
         if (suggestion.Covered)
         {

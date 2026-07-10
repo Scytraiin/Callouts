@@ -16,8 +16,8 @@ public sealed class SuggestionsTests
     private static TriggerEvent EnemyCast(int id = 100, string name = "Ultima", bool targetSelf = false)
         => new() { Kind = TriggerKind.Cast, ActionId = id, ActionName = name, CasterIsEnemy = true, TargetIsSelf = targetSelf };
 
-    private static TriggerEvent StatusGain(int id = 50, string name = "Doom", bool self = true, bool party = false)
-        => new() { Kind = TriggerKind.Status, StatusId = id, StatusName = name, StatusGained = true, BearerIsSelf = self, BearerInParty = party };
+    private static TriggerEvent StatusGain(int id = 50, string name = "Doom", bool self = true, bool party = false, bool debuff = true)
+        => new() { Kind = TriggerKind.Status, StatusId = id, StatusName = name, StatusGained = true, BearerIsSelf = self, BearerInParty = party, IsDebuff = debuff };
 
     [Fact]
     public void EnemyCast_Aggregates_WithCountAndCategory()
@@ -126,5 +126,29 @@ public sealed class SuggestionsTests
         var dangerous = new Candidate { Key = "k2", Kind = TriggerKind.Cast, Count = 2, MaxCastTimeSeconds = 5, AoeShape = AoeShape.Circle };
 
         Assert.True(SuggestionScorer.Score(dangerous) > SuggestionScorer.Score(plain));
+    }
+
+    [Fact]
+    public void SelfBuff_IsExcluded_OnlyDebuffsSuggested()
+    {
+        var c = new SuggestionCollector();
+        c.Observe(StatusGain(id: 48, name: "Well Fed", self: true, debuff: false));
+
+        Assert.Empty(c.GetSuggestions(NoRules, NoneIgnored));
+    }
+
+    [Fact]
+    public void Enrichment_LongAoeCast_OutranksInstantSingleTarget_AndSetsHint()
+    {
+        var c = new SuggestionCollector();
+        // Dangerous: long cast, big circle.
+        c.Observe(new TriggerEvent { Kind = TriggerKind.Cast, ActionId = 1, ActionName = "Flare", CasterIsEnemy = true, CastTimeSeconds = 5, AoeShape = AoeShape.Circle, AoeRange = 8 });
+        // Minor: instant single-target.
+        c.Observe(new TriggerEvent { Kind = TriggerKind.Cast, ActionId = 2, ActionName = "Poke", CasterIsEnemy = true, CastTimeSeconds = 0, AoeShape = AoeShape.Single });
+
+        var ranked = c.GetSuggestions(NoRules, NoneIgnored);
+        Assert.Equal(1, ranked[0].ProposedSource.ActionId);
+        Assert.Contains("Circle", ranked[0].Hint);
+        Assert.Contains("cast", ranked[0].Hint);
     }
 }

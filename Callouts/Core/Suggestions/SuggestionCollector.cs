@@ -100,8 +100,8 @@ public sealed class SuggestionCollector
         // Only enemy casts are worth suggesting (this also excludes the player's own casts).
         TriggerKind.Cast when evt.CasterIsEnemy => $"cast:{evt.ActionId}",
 
-        // Only status gains on self / party members.
-        TriggerKind.Status when evt.StatusGained && (evt.BearerIsSelf || evt.BearerInParty)
+        // Only debuff gains on self / party members (excludes buffs like Well Fed).
+        TriggerKind.Status when evt.StatusGained && evt.IsDebuff && (evt.BearerIsSelf || evt.BearerInParty)
             => $"status:{evt.StatusId}:{(evt.BearerIsSelf ? "self" : "party")}",
 
         _ => null, // advanced kinds handled in issue 021
@@ -128,10 +128,21 @@ public sealed class SuggestionCollector
         if (evt.Kind == TriggerKind.Cast)
         {
             candidate.Name = string.IsNullOrEmpty(evt.ActionName) ? candidate.Name : evt.ActionName;
+            candidate.MaxCastTimeSeconds = Math.Max(candidate.MaxCastTimeSeconds, evt.CastTimeSeconds);
+            if (evt.AoeShape != AoeShape.None)
+            {
+                candidate.AoeShape = evt.AoeShape;
+                candidate.AoeRange = evt.AoeRange;
+            }
         }
         else if (evt.Kind == TriggerKind.Status)
         {
             candidate.Name = string.IsNullOrEmpty(evt.StatusName) ? candidate.Name : evt.StatusName;
+            candidate.IsDebuff = evt.IsDebuff;
+            if (evt.DurationSeconds > 0)
+            {
+                candidate.DurationSeconds = evt.DurationSeconds;
+            }
         }
     }
 
@@ -155,9 +166,37 @@ public sealed class SuggestionCollector
             Count = c.Count,
             Covered = IsCovered(c, rules),
             Advanced = c.Kind is TriggerKind.Vfx or TriggerKind.HeadMarker,
+            Hint = HintFor(c),
             ProposedSource = SourceFor(c),
             ProposedOutputs = OutputsFor(c, name),
         };
+    }
+
+    private static string HintFor(Candidate c)
+    {
+        var parts = new List<string>();
+        if (c.Kind == TriggerKind.Cast)
+        {
+            if (c.MaxCastTimeSeconds >= 0.1)
+            {
+                parts.Add($"{c.MaxCastTimeSeconds:0.0}s cast");
+            }
+
+            if (c.AoeShape is not (AoeShape.None or AoeShape.Single))
+            {
+                parts.Add(c.AoeRange > 0 ? $"{c.AoeShape} {c.AoeRange:0}y" : c.AoeShape.ToString());
+            }
+        }
+        else if (c.Kind == TriggerKind.Status)
+        {
+            parts.Add(c.IsDebuff ? "debuff" : "buff");
+            if (c.DurationSeconds > 0)
+            {
+                parts.Add($"{c.DurationSeconds:0}s");
+            }
+        }
+
+        return string.Join(" · ", parts);
     }
 
     private static string ResolveName(Candidate c)
