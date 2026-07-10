@@ -57,8 +57,8 @@ trigger on your own `/echo` macros.
 
 ### Release status
 
-- Current plugin version: `0.1.0`
-- the current release target is `v0.1.0-alpha`
+- Current plugin version: `1.0.0`
+- the current release target is `v1.0.0`
 
 ## Upgrade path
 

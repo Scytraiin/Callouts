@@ -3,3 +3,6 @@ obj/
 bin/
 *.user
 /out/
+PRD.md
+DESIGN.md
+/issues
