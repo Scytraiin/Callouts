@@ -10,6 +10,9 @@ namespace Callouts.Core.Rules;
 /// </summary>
 public static class RuleValidator
 {
+    public const double MinCooldownSeconds = 0;
+    public const double MaxCooldownSeconds = 600;
+
     public static IReadOnlyList<string> Validate(Rule rule)
     {
         var errors = new List<string>();
@@ -47,6 +50,11 @@ public static class RuleValidator
             && (rule.Outputs.Sound.EffectId < SoundOutput.MinEffectId || rule.Outputs.Sound.EffectId > SoundOutput.MaxEffectId))
         {
             errors.Add($"Sound effect must be between {SoundOutput.MinEffectId} and {SoundOutput.MaxEffectId}.");
+        }
+
+        if (rule.CooldownSeconds < MinCooldownSeconds || rule.CooldownSeconds > MaxCooldownSeconds)
+        {
+            errors.Add($"Cooldown must be between {MinCooldownSeconds} and {MaxCooldownSeconds} seconds.");
         }
 
         return errors;

@@ -9,8 +9,8 @@ namespace Callouts.Core.Engine;
 /// </summary>
 public sealed class RateLimiter
 {
-    private readonly double capacity;
-    private readonly double refillPerSecond;
+    private double capacity;
+    private double refillPerSecond;
 
     private double tokens;
     private DateTime lastRefill;
@@ -24,6 +24,17 @@ public sealed class RateLimiter
     }
 
     public long DroppedCount { get; private set; }
+
+    /// <summary>Applies a new rate at runtime (from Settings) without a plugin reload.</summary>
+    public void Reconfigure(double capacity, double refillPerSecond)
+    {
+        this.capacity = capacity < 1 ? 1 : capacity;
+        this.refillPerSecond = refillPerSecond < 0 ? 0 : refillPerSecond;
+        if (this.tokens > this.capacity)
+        {
+            this.tokens = this.capacity;
+        }
+    }
 
     public bool TryAcquire(DateTime now)
     {

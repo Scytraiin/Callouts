@@ -43,6 +43,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly Dictionary<AlertOutputKind, IAlertSink> sinks;
 
     private string currentZone = string.Empty;
+    private bool advancedFailureNotified;
 
     public Plugin(
         IDalamudPluginInterface pluginInterface,
@@ -85,8 +86,8 @@ public sealed class Plugin : IDalamudPlugin
 
         // Stable trigger sources — always on.
         this.sources.Add(new ChatSource(chatGui, this.log));
-        this.sources.Add(new CastSource(objectTable, framework, partyList, dataManager, this.log));
-        this.sources.Add(new StatusSource(objectTable, framework, partyList, targetManager, dataManager, this.log));
+        this.sources.Add(new CastSource(objectTable, framework, partyList, dataManager, clientState, this.log));
+        this.sources.Add(new StatusSource(objectTable, framework, partyList, targetManager, dataManager, clientState, this.log));
         this.sources.Add(new DutyEventSource(dutyState, this.log));
 
         foreach (var source in this.sources)
@@ -96,7 +97,7 @@ public sealed class Plugin : IDalamudPlugin
         }
 
         // Advanced (hook-based) source — started only while the master toggle is on (FR-3).
-        this.vfxSource = new VfxSource(interop, objectTable, this.log);
+        this.vfxSource = new VfxSource(interop, objectTable, partyList, this.log);
         this.vfxSource.OnEvent += this.HandleTriggerEvent;
         this.engine.AvailabilityProvider = this.GetAvailability;
         if (this.configuration.Options.AdvancedSourcesEnabled)
@@ -192,10 +193,12 @@ public sealed class Plugin : IDalamudPlugin
 
     private void NotifyIfAdvancedFailed()
     {
-        if (this.vfxSource.Status != SourceStatus.Failed)
+        if (this.vfxSource.Status != SourceStatus.Failed || this.advancedFailureNotified)
         {
             return;
         }
+
+        this.advancedFailureNotified = true;
 
         var affected = 0;
         foreach (var rule in this.configuration.Rules)

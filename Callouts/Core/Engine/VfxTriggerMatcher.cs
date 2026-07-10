@@ -41,6 +41,7 @@ public static class VfxTriggerMatcher
     {
         BearerScope.Self => evt.TargetIsSelf,
         BearerScope.Party => evt.TargetInParty,
-        _ => true, // Anyone / Target
+        BearerScope.Target => evt.BearerIsTarget,
+        _ => true, // Anyone
     };
 }

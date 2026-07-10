@@ -48,6 +48,7 @@ public sealed class RulesWindow : Window, IDisposable
     private List<Rule>? pendingImport;
     private CollisionChoice importChoice = CollisionChoice.Replace;
     private string? importError;
+    private int importSkipped;
 
     public RulesWindow(
         Configuration configuration,
@@ -91,7 +92,7 @@ public sealed class RulesWindow : Window, IDisposable
 
         this.draft = rule;
         this.editingId = null;
-        this.focusPatternNextFrame = true;
+        this.focusPatternNextFrame = evt.Kind == TriggerKind.Chat;
         this.testerInput = evt.Kind == TriggerKind.Chat ? evt.Message : string.Empty;
         this.statusMessage = null;
         this.IsOpen = true;
@@ -185,6 +186,12 @@ public sealed class RulesWindow : Window, IDisposable
         if (ImGui.Checkbox("Enabled only", ref enabled))
         {
             this.enabledOnly = enabled;
+        }
+
+        // Always-visible status line (export/import/delete/undo feedback), not gated on the editor.
+        if (!string.IsNullOrEmpty(this.statusMessage))
+        {
+            ImGui.TextColored(OkColor, this.statusMessage);
         }
     }
 
@@ -403,6 +410,13 @@ public sealed class RulesWindow : Window, IDisposable
         ImGui.TextDisabled("WHEN");
         DrawSourceKindPicker(d.Source);
 
+        // The pattern-focus request only applies to the Chat editor; drop it for other kinds so
+        // switching Source to Chat later doesn't steal keyboard focus unexpectedly.
+        if (d.Source.Kind != TriggerKind.Chat)
+        {
+            this.focusPatternNextFrame = false;
+        }
+
         switch (d.Source.Kind)
         {
             case TriggerKind.Chat:
@@ -451,12 +465,6 @@ public sealed class RulesWindow : Window, IDisposable
         {
             this.CancelEdit();
         }
-
-        if (!string.IsNullOrEmpty(this.statusMessage))
-        {
-            ImGui.SameLine();
-            ImGui.TextColored(OkColor, this.statusMessage);
-        }
     }
 
     private void DrawOptions(Rule d)
@@ -464,7 +472,7 @@ public sealed class RulesWindow : Window, IDisposable
         var cooldown = (float)d.CooldownSeconds;
         if (ImGui.InputFloat("Cooldown (sec)", ref cooldown))
         {
-            d.CooldownSeconds = Math.Clamp(cooldown, 0f, 3600f);
+            d.CooldownSeconds = Math.Clamp(cooldown, (float)RuleValidator.MinCooldownSeconds, (float)RuleValidator.MaxCooldownSeconds);
         }
 
         var onlyCombat = d.Scope.OnlyInCombat;
@@ -852,7 +860,8 @@ public sealed class RulesWindow : Window, IDisposable
         if (ImGui.SmallButton("Test##toast"))
         {
             var text = string.IsNullOrEmpty(d.Outputs.Toast.Text) ? "Callouts test toast" : d.Outputs.Toast.Text;
-            this.previewAction(new AlertAction { Kind = AlertOutputKind.Toast, Text = text, ToastStyle = d.Outputs.Toast.Style });
+            // [test]-prefixed so a mid-duty test is never mistaken for a real alert (DESIGN §7.5).
+            this.previewAction(new AlertAction { Kind = AlertOutputKind.Toast, Text = $"[test] {text}", ToastStyle = d.Outputs.Toast.Style });
         }
     }
 
@@ -918,9 +927,29 @@ public sealed class RulesWindow : Window, IDisposable
             return;
         }
 
-        this.pendingImport = new List<Rule>(result.Rules);
+        // Imported packs skip the editor, so validate here: drop invalid rules from the preview.
+        var valid = new List<Rule>();
+        var skipped = 0;
+        foreach (var rule in result.Rules)
+        {
+            if (RuleValidator.IsValid(rule))
+            {
+                valid.Add(rule);
+            }
+            else
+            {
+                skipped++;
+            }
+        }
+
+        this.pendingImport = valid;
+        this.importSkipped = skipped;
         this.importChoice = CollisionChoice.Replace;
-        this.importError = null;
+        this.importError = valid.Count == 0 ? "No valid rules in the import code." : null;
+        if (this.importError is not null)
+        {
+            this.pendingImport = null;
+        }
     }
 
     private void DrawImportPanel()
@@ -943,7 +972,8 @@ public sealed class RulesWindow : Window, IDisposable
         }
 
         var collisions = RuleCodec.CountCollisions(this.configuration.Rules, this.pendingImport);
-        ImGui.TextColored(WarnColor, $"Import preview: {this.pendingImport.Count} rule(s), {collisions} already exist.");
+        var skippedNote = this.importSkipped > 0 ? $", {this.importSkipped} invalid skipped" : string.Empty;
+        ImGui.TextColored(WarnColor, $"Import preview: {this.pendingImport.Count} rule(s), {collisions} already exist{skippedNote}.");
 
         var choice = this.importChoice;
         EnumCombo("On duplicates", ref choice);
@@ -980,7 +1010,14 @@ public sealed class RulesWindow : Window, IDisposable
         TriggerKind.Cast => MatchResult.FromValues(("caster", "TestCaster"), ("action", "TestAction"), ("zone", "TestZone")),
         TriggerKind.Status => MatchResult.FromValues(("status", "TestStatus"), ("bearer", "You"), ("zone", "TestZone")),
         TriggerKind.DutyEvent => MatchResult.FromValues(("event", "Wiped"), ("zone", "TestZone")),
-        _ => MatchResult.FromValues(("sender", "TestSender"), ("message", "test message"), ("zone", "TestZone")),
+        TriggerKind.Vfx => MatchResult.FromValues(("vfx", "vfx/lockon/eff/example"), ("zone", "TestZone")),
+        TriggerKind.HeadMarker => MatchResult.FromValues(("marker", "spread"), ("zone", "TestZone")),
+        // Chat/regex: also fill $1..$3 with canned captures so regex output renders in a test.
+        _ => new MatchResult
+        {
+            Values = MatchResult.FromValues(("sender", "TestSender"), ("message", "test message"), ("zone", "TestZone")).Values,
+            Captures = ["example", "example2", "example3"],
+        },
     };
 
     private static AlertAction PrefixTest(AlertAction action)
@@ -1010,7 +1047,7 @@ public sealed class RulesWindow : Window, IDisposable
     {
         this.draft = rule.Clone();
         this.editingId = rule.Id;
-        this.focusPatternNextFrame = true;
+        this.focusPatternNextFrame = rule.Source.Kind == TriggerKind.Chat;
         this.testerInput = string.Empty;
         this.statusMessage = null;
     }

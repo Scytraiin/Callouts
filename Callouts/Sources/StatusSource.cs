@@ -22,6 +22,7 @@ public sealed class StatusSource : ITriggerSource
     private readonly IPartyList partyList;
     private readonly ITargetManager targetManager;
     private readonly IDataManager dataManager;
+    private readonly IClientState clientState;
     private readonly IPluginLog log;
 
     // actorId -> (statusId -> stacks) from the previous sweep.
@@ -36,6 +37,7 @@ public sealed class StatusSource : ITriggerSource
         IPartyList partyList,
         ITargetManager targetManager,
         IDataManager dataManager,
+        IClientState clientState,
         IPluginLog log)
     {
         this.objectTable = objectTable;
@@ -43,6 +45,7 @@ public sealed class StatusSource : ITriggerSource
         this.partyList = partyList;
         this.targetManager = targetManager;
         this.dataManager = dataManager;
+        this.clientState = clientState;
         this.log = log;
     }
 
@@ -60,6 +63,7 @@ public sealed class StatusSource : ITriggerSource
         }
 
         this.framework.Update += this.OnUpdate;
+        this.clientState.TerritoryChanged += this.OnTerritoryChanged;
         this.started = true;
         this.Status = SourceStatus.Active;
     }
@@ -72,12 +76,16 @@ public sealed class StatusSource : ITriggerSource
         }
 
         this.framework.Update -= this.OnUpdate;
+        this.clientState.TerritoryChanged -= this.OnTerritoryChanged;
         this.previous.Clear();
         this.started = false;
         this.Status = SourceStatus.Disabled;
     }
 
     public void Dispose() => this.Stop();
+
+    // Actors all despawn on a zone change; drop baselines so re-entry re-seeds cleanly.
+    private void OnTerritoryChanged(uint territoryType) => this.previous.Clear();
 
     private void OnUpdate(IFramework framework)
     {

@@ -89,15 +89,14 @@ public sealed class SettingsWindow : Window, IDisposable
         if (ImGui.InputFloat("Rate limit (alerts/sec)", ref rate))
         {
             options.RateLimitPerSecond = Math.Clamp(rate, 1f, 100f);
+            this.engine.RateLimiter.Reconfigure(options.RateLimitPerSecond, options.RateLimitPerSecond);
             this.save();
         }
-
-        ImGui.TextDisabled("Rate-limit changes apply after the next plugin reload.");
 
         var cooldown = (float)options.DefaultCooldownSeconds;
         if (ImGui.InputFloat("Default cooldown for new rules (sec)", ref cooldown))
         {
-            options.DefaultCooldownSeconds = Math.Clamp(cooldown, 0f, 3600f);
+            options.DefaultCooldownSeconds = Math.Clamp(cooldown, 0f, 600f);
             this.save();
         }
 

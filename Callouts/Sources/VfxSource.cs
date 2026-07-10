@@ -27,15 +27,17 @@ public sealed class VfxSource : ITriggerSource
 
     private readonly IGameInteropProvider interop;
     private readonly IObjectTable objectTable;
+    private readonly IPartyList partyList;
     private readonly IPluginLog log;
 
     private Hook<VfxCreateDelegate>? hook;
     private bool started;
 
-    public VfxSource(IGameInteropProvider interop, IObjectTable objectTable, IPluginLog log)
+    public VfxSource(IGameInteropProvider interop, IObjectTable objectTable, IPartyList partyList, IPluginLog log)
     {
         this.interop = interop;
         this.objectTable = objectTable;
+        this.partyList = partyList;
         this.log = log;
     }
 
@@ -153,10 +155,27 @@ public sealed class VfxSource : ITriggerSource
             var obj = this.objectTable[i];
             if (obj is not null && obj.Address == targetObject)
             {
-                return (obj.GameObjectId == localId, false);
+                var self = obj.GameObjectId == localId;
+                var inParty = this.BuildPartyNameSet().Contains(obj.Name.TextValue);
+                return (self, inParty);
             }
         }
 
         return (false, false);
+    }
+
+    private System.Collections.Generic.HashSet<string> BuildPartyNameSet()
+    {
+        var names = new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal);
+        for (var i = 0; i < this.partyList.Length; i++)
+        {
+            var member = this.partyList[i];
+            if (member is not null)
+            {
+                names.Add(member.Name.TextValue);
+            }
+        }
+
+        return names;
     }
 }

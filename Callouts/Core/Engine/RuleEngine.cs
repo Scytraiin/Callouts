@@ -80,6 +80,13 @@ public sealed class RuleEngine
                 continue;
             }
 
+            // A rule with no enabled output must not consume a cooldown or a rate-limit token
+            // (defends against imported rules that skipped editor validation).
+            if (!rule.Outputs.AnyEnabled)
+            {
+                continue;
+            }
+
             // Cooldown is per rule; the rate limit is global. Neither is consulted for the
             // synthetic test-fire path (see BuildActions / test-fire in issue 011).
             if (!this.cooldownGate.IsReady(rule.Id, rule.CooldownSeconds, now))

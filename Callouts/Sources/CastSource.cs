@@ -23,6 +23,7 @@ public sealed class CastSource : ITriggerSource
     private readonly IFramework framework;
     private readonly IPartyList partyList;
     private readonly IDataManager dataManager;
+    private readonly IClientState clientState;
     private readonly IPluginLog log;
 
     private readonly Dictionary<ulong, uint> activeCasts = new();
@@ -30,12 +31,13 @@ public sealed class CastSource : ITriggerSource
     private readonly Dictionary<uint, string> actionNameCache = new();
     private bool started;
 
-    public CastSource(IObjectTable objectTable, IFramework framework, IPartyList partyList, IDataManager dataManager, IPluginLog log)
+    public CastSource(IObjectTable objectTable, IFramework framework, IPartyList partyList, IDataManager dataManager, IClientState clientState, IPluginLog log)
     {
         this.objectTable = objectTable;
         this.framework = framework;
         this.partyList = partyList;
         this.dataManager = dataManager;
+        this.clientState = clientState;
         this.log = log;
     }
 
@@ -53,6 +55,7 @@ public sealed class CastSource : ITriggerSource
         }
 
         this.framework.Update += this.OnUpdate;
+        this.clientState.TerritoryChanged += this.OnTerritoryChanged;
         this.started = true;
         this.Status = SourceStatus.Active;
     }
@@ -65,12 +68,15 @@ public sealed class CastSource : ITriggerSource
         }
 
         this.framework.Update -= this.OnUpdate;
+        this.clientState.TerritoryChanged -= this.OnTerritoryChanged;
         this.activeCasts.Clear();
         this.started = false;
         this.Status = SourceStatus.Disabled;
     }
 
     public void Dispose() => this.Stop();
+
+    private void OnTerritoryChanged(uint territoryType) => this.activeCasts.Clear();
 
     private void OnUpdate(IFramework framework)
     {
