@@ -89,8 +89,13 @@ def update_repo_json(path: Path, version: str, tag: str, assembly_version: str) 
 
 
 def update_readme(path: Path, pattern: str, replacement: str) -> None:
+    # Best-effort: the README version lines are optional metadata. If the maintainer has
+    # customized the README and removed them, skip silently instead of failing the release.
     content = path.read_text(encoding="utf-8")
-    updated = replace_once(content, pattern, replacement, path)
+    updated, count = re.subn(pattern, replacement, content, count=1, flags=re.MULTILINE)
+    if count == 0:
+        print(f"  (README: no line matching {pattern!r}; skipped)")
+        return
     path.write_text(updated, encoding="utf-8")
 
 
