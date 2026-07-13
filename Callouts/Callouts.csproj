@@ -2,9 +2,9 @@
   <PropertyGroup>
     <AssemblyName>Callouts</AssemblyName>
     <Authors>ScytRaiin</Authors>
-    <Version>1.1.0</Version>
-    <AssemblyVersion>1.1.0.0</AssemblyVersion>
-    <FileVersion>1.1.0.0</FileVersion>
+    <Version>1.2.0</Version>
+    <AssemblyVersion>1.2.0.0</AssemblyVersion>
+    <FileVersion>1.2.0.0</FileVersion>
     <Description>User-defined trigger rules that turn in-game events into local alerts: Echo messages, sound effects, and toasts.</Description>
     <PackageProjectUrl>https://github.com/Scytraiin/Callouts</PackageProjectUrl>
     <IsPackable>false</IsPackable>
