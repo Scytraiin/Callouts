@@ -33,4 +33,7 @@ public sealed class GlobalOptions
 
     /// <summary>Open the Suggestions window automatically when combat ends (issue 020).</summary>
     public bool AutoOpenSuggestions { get; set; }
+
+    /// <summary>Append every observed VFX spawn to a capture file for offline analysis (opt-in, no size cap).</summary>
+    public bool VfxCaptureToFile { get; set; }
 }

@@ -14,6 +14,7 @@ using Callouts.Core.Config;
 using Callouts.Core.Engine;
 using Callouts.Core.Rules;
 using Callouts.Core.Suggestions;
+using Callouts.Logging;
 using Callouts.Sinks;
 using Callouts.Sources;
 using Callouts.Windows;
@@ -40,6 +41,7 @@ public sealed class Plugin : IDalamudPlugin
 
     private readonly RuleEngine engine;
     private readonly EventBuffer eventBuffer;
+    private readonly VfxCaptureLog vfxCaptureLog;
     private readonly SuggestionCollector suggestionCollector = new();
     private readonly List<ITriggerSource> sources = [];
     private readonly VfxSource vfxSource;
@@ -114,8 +116,15 @@ public sealed class Plugin : IDalamudPlugin
 
         this.eventBuffer = new EventBuffer(this.configuration.Options.EventLogDefaultLimit, this.configuration.Options.EventCategoryLimits);
 
+        var configDir = this.pluginInterface.ConfigFile.Directory?.FullName ?? ".";
+        this.vfxCaptureLog = new VfxCaptureLog(Path.Combine(configDir, "vfx-capture.log"), this.log);
+        if (this.configuration.Options.VfxCaptureToFile)
+        {
+            this.vfxCaptureLog.SetEnabled(true);
+        }
+
         this.eventsWindow = new LiveEventsWindow(this.eventBuffer, this.engine, this.CreateRuleFromEvent);
-        this.settingsWindow = new SettingsWindow(this.configuration, this.engine, this.eventBuffer, this.configuration.Save, this.OnAdvancedToggled);
+        this.settingsWindow = new SettingsWindow(this.configuration, this.engine, this.eventBuffer, this.vfxCaptureLog, this.configuration.Save, this.OnAdvancedToggled);
         this.settingsWindow.SetAdvancedHealthProvider(this.DescribeAdvancedHealth);
         this.suggestionsWindow = new SuggestionsWindow(this.suggestionCollector, this.configuration, this.CreateRuleFromSuggestion, this.configuration.Save);
         this.rulesWindow = new RulesWindow(
@@ -170,6 +179,8 @@ public sealed class Plugin : IDalamudPlugin
 
         this.vfxSource.OnEvent -= this.HandleTriggerEvent;
         this.vfxSource.Dispose();
+
+        this.vfxCaptureLog.Dispose();
 
         this.windowSystem.RemoveAllWindows();
         this.rulesWindow.Dispose();
@@ -327,6 +338,7 @@ public sealed class Plugin : IDalamudPlugin
         });
 
         this.suggestionCollector.Observe(enriched);
+        this.vfxCaptureLog.Write(enriched);
 
         IReadOnlyList<AlertAction> actions;
         try

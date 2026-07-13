@@ -5,8 +5,8 @@
     "Description": "User-defined trigger rules that turn in-game events into local alerts - Echo messages, sound effects, and toasts. Rules are configured entirely in the UI; everything stays on your machine.",
     "Punchline": "When something you care about happens, Callouts tells you.",
     "InternalName": "Callouts",
-    "AssemblyVersion": "1.2.0.0",
-    "TestingAssemblyVersion": "1.2.0.0",
+    "AssemblyVersion": "1.3.0.0",
+    "TestingAssemblyVersion": "1.3.0.0",
     "RepoUrl": "https://github.com/Scytraiin/Callouts",
     "IconUrl": "https://raw.githubusercontent.com/Scytraiin/Callouts/master/images/icon.png",
     "ApplicableVersion": "any",
@@ -15,9 +15,9 @@
     "IsTestingExclusive": false,
     "LastUpdate": 1783715238,
     "DownloadCount": 0,
-    "DownloadLinkInstall": "https://github.com/Scytraiin/Callouts/releases/download/v1.2.0/latest.zip",
-    "DownloadLinkTesting": "https://github.com/Scytraiin/Callouts/releases/download/v1.2.0/latest.zip",
-    "DownloadLinkUpdate": "https://github.com/Scytraiin/Callouts/releases/download/v1.2.0/latest.zip",
-    "Changelog": "Callouts 1.2.0 — Live events improvements: per-category log budgets, category filters, and search."
+    "DownloadLinkInstall": "https://github.com/Scytraiin/Callouts/releases/download/v1.3.0/latest.zip",
+    "DownloadLinkTesting": "https://github.com/Scytraiin/Callouts/releases/download/v1.3.0/latest.zip",
+    "DownloadLinkUpdate": "https://github.com/Scytraiin/Callouts/releases/download/v1.3.0/latest.zip",
+    "Changelog": "Callouts 1.3.0 — Opt-in VFX capture to file (append-only, no size cap) for offline analysis."
   }
 ]

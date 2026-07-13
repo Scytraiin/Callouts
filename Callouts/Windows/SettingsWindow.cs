@@ -6,6 +6,7 @@ using Dalamud.Interface.Windowing;
 
 using Callouts.Core.Engine;
 using Callouts.Core.Rules;
+using Callouts.Logging;
 
 namespace Callouts.Windows;
 
@@ -18,6 +19,7 @@ public sealed class SettingsWindow : Window, IDisposable
     private readonly Configuration configuration;
     private readonly RuleEngine engine;
     private readonly EventBuffer buffer;
+    private readonly VfxCaptureLog vfxCaptureLog;
     private readonly Action save;
     private readonly Action<bool> onAdvancedToggled;
     private Func<string>? advancedHealth;
@@ -27,6 +29,7 @@ public sealed class SettingsWindow : Window, IDisposable
         Configuration configuration,
         RuleEngine engine,
         EventBuffer buffer,
+        VfxCaptureLog vfxCaptureLog,
         Action save,
         Action<bool> onAdvancedToggled)
         : base("Callouts — Settings###CalloutsSettings")
@@ -34,6 +37,7 @@ public sealed class SettingsWindow : Window, IDisposable
         this.configuration = configuration;
         this.engine = engine;
         this.buffer = buffer;
+        this.vfxCaptureLog = vfxCaptureLog;
         this.save = save;
         this.onAdvancedToggled = onAdvancedToggled;
 
@@ -86,6 +90,26 @@ public sealed class SettingsWindow : Window, IDisposable
         if (this.advancedHealth is not null)
         {
             ImGui.TextDisabled(this.advancedHealth());
+        }
+
+        ImGui.Separator();
+        ImGui.TextDisabled("VFX CAPTURE");
+        ImGui.TextWrapped("Append every observed VFX spawn to a file for offline analysis — e.g. finding the exact paths that tell real vs fake mechanics apart. No size limit: the file grows until you turn this off or clear it.");
+
+        var capture = options.VfxCaptureToFile;
+        if (ImGui.Checkbox("Capture VFX to file", ref capture))
+        {
+            options.VfxCaptureToFile = capture;
+            this.vfxCaptureLog.SetEnabled(capture);
+            this.save();
+        }
+
+        ImGui.TextDisabled("File: " + this.vfxCaptureLog.FilePath);
+        ImGui.TextWrapped("VFX events only flow while advanced sources are enabled AND the VFX hook signature is configured for your client. If the status above shows FAILED, the file stays empty.");
+
+        if (ImGui.Button("Clear capture file"))
+        {
+            this.vfxCaptureLog.ClearFile();
         }
 
         ImGui.Separator();
