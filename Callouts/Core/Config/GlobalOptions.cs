@@ -1,5 +1,7 @@
 using System.Collections.Generic;
 
+using Callouts.Core.Engine;
+
 namespace Callouts.Core.Config;
 
 /// <summary>
@@ -20,8 +22,11 @@ public sealed class GlobalOptions
     /// <summary>Default cooldown (seconds) applied to newly created rules.</summary>
     public double DefaultCooldownSeconds { get; set; } = 2.0;
 
-    /// <summary>Live-events log size (entries kept in the ring buffer, issue 010).</summary>
-    public int EventBufferSize { get; set; } = 2000;
+    /// <summary>Default per-category log limit — each event category keeps its own most-recent N.</summary>
+    public int EventLogDefaultLimit { get; set; } = 20000;
+
+    /// <summary>Optional per-category overrides for the log limit (empty = use the default).</summary>
+    public Dictionary<EventCategory, int> EventCategoryLimits { get; set; } = [];
 
     /// <summary>Suggestion keys the user dismissed; never re-suggested (issue 020).</summary>
     public List<string> IgnoredSuggestionKeys { get; set; } = [];

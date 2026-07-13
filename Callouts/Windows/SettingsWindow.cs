@@ -51,6 +51,12 @@ public sealed class SettingsWindow : Window, IDisposable
     {
     }
 
+    private void ApplyLogLimits()
+    {
+        this.buffer.SetLimits(this.configuration.Options.EventLogDefaultLimit, this.configuration.Options.EventCategoryLimits);
+        this.save();
+    }
+
     public override void Draw()
     {
         var options = this.configuration.Options;
@@ -100,15 +106,43 @@ public sealed class SettingsWindow : Window, IDisposable
             this.save();
         }
 
-        var bufferSize = options.EventBufferSize;
-        if (ImGui.InputInt("Live-events log size (entries)", ref bufferSize))
+        var defaultLimit = options.EventLogDefaultLimit;
+        if (ImGui.InputInt("Default per-category log limit", ref defaultLimit))
         {
-            options.EventBufferSize = Math.Clamp(bufferSize, 50, 100_000);
-            this.buffer.SetCapacity(options.EventBufferSize);
-            this.save();
+            options.EventLogDefaultLimit = Math.Clamp(defaultLimit, 100, 100_000);
+            this.ApplyLogLimits();
         }
 
-        ImGui.TextDisabled("Up to 100,000 entries. The window renders the newest matches; use search to narrow.");
+        ImGui.TextDisabled("Each event category keeps its own most-recent entries (max 100,000 each), so a noisy category can't evict the ones you care about.");
+
+        if (ImGui.CollapsingHeader("Per-category limits (override the default)"))
+        {
+            foreach (EventCategory category in Enum.GetValues<EventCategory>())
+            {
+                var effective = options.EventCategoryLimits.TryGetValue(category, out var ov) ? ov : options.EventLogDefaultLimit;
+                var value = effective;
+                if (ImGui.InputInt($"{EventCategorizer.Label(category)}##lim{category}", ref value))
+                {
+                    var clamped = Math.Clamp(value, 100, 100_000);
+                    if (clamped == options.EventLogDefaultLimit)
+                    {
+                        options.EventCategoryLimits.Remove(category); // follow the default again
+                    }
+                    else
+                    {
+                        options.EventCategoryLimits[category] = clamped;
+                    }
+
+                    this.ApplyLogLimits();
+                }
+            }
+
+            if (ImGui.Button("Reset all to default"))
+            {
+                options.EventCategoryLimits.Clear();
+                this.ApplyLogLimits();
+            }
+        }
 
         ImGui.Separator();
         ImGui.TextDisabled("SUGGESTIONS");

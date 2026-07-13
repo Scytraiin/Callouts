@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace Callouts.Core.Engine;
@@ -18,29 +19,78 @@ public sealed record EventRecord
 }
 
 /// <summary>
-/// Session-only ring buffer of recent events (never persisted). Newest-first snapshots feed the
-/// Live events window; over-capacity entries drop oldest-first (DESIGN.md §7.3).
+/// Session-only event log, <b>partitioned by <see cref="EventCategory"/></b> so each category keeps
+/// its own most-recent entries: a noisy category (chat, other-status) can never evict the ones you
+/// care about (enemy casts, your debuffs). Each partition is an independent ring buffer with its own
+/// limit (a shared default plus optional per-category overrides). A global sequence number lets the
+/// UI merge the partitions back into one newest-first timeline. Never persisted (DESIGN.md §7.3).
+///
+/// Not thread-safe by design: Add and the UI Draw both run on the game's main thread, so no
+/// enumeration ever interleaves with a mutation.
 /// </summary>
 public sealed class EventBuffer
 {
-    private readonly LinkedList<EventRecord> items = new();
-    private int capacity;
+    private const int MinLimit = 1;
+    private const int MaxLimit = 100_000;
 
-    public EventBuffer(int capacity = 200)
+    private readonly Dictionary<EventCategory, LinkedList<Entry>> byCategory = new();
+    private readonly Dictionary<EventCategory, int> overrides = new();
+    private int defaultLimit;
+    private long sequence;
+
+    public EventBuffer(int defaultLimit = 2000, IReadOnlyDictionary<EventCategory, int>? categoryOverrides = null)
     {
-        this.capacity = capacity < 1 ? 1 : capacity;
+        this.defaultLimit = Clamp(defaultLimit);
+        if (categoryOverrides is not null)
+        {
+            foreach (var (category, limit) in categoryOverrides)
+            {
+                this.overrides[category] = Clamp(limit);
+            }
+        }
+
+        foreach (EventCategory category in Enum.GetValues<EventCategory>())
+        {
+            this.byCategory[category] = new LinkedList<Entry>();
+        }
     }
 
     public bool Paused { get; set; }
 
-    public int Capacity => this.capacity;
-
-    public int Count => this.items.Count;
-
-    public void SetCapacity(int value)
+    /// <summary>Total entries across all categories.</summary>
+    public int Count
     {
-        this.capacity = value < 1 ? 1 : value;
-        this.Trim();
+        get
+        {
+            var total = 0;
+            foreach (var list in this.byCategory.Values)
+            {
+                total += list.Count;
+            }
+
+            return total;
+        }
+    }
+
+    public int CountFor(EventCategory category) => this.byCategory[category].Count;
+
+    public int LimitFor(EventCategory category)
+        => this.overrides.TryGetValue(category, out var limit) ? limit : this.defaultLimit;
+
+    /// <summary>Applies a new default + per-category overrides at runtime and re-trims each partition.</summary>
+    public void SetLimits(int defaultLimit, IReadOnlyDictionary<EventCategory, int> categoryOverrides)
+    {
+        this.defaultLimit = Clamp(defaultLimit);
+        this.overrides.Clear();
+        foreach (var (category, limit) in categoryOverrides)
+        {
+            this.overrides[category] = Clamp(limit);
+        }
+
+        foreach (var category in this.byCategory.Keys)
+        {
+            this.Trim(category);
+        }
     }
 
     public void Add(EventRecord record)
@@ -50,42 +100,83 @@ public sealed class EventBuffer
             return;
         }
 
-        this.items.AddLast(record);
-        this.Trim();
+        var category = EventCategorizer.Categorize(record.Event);
+        this.byCategory[category].AddLast(new Entry(this.sequence++, record));
+        this.Trim(category);
     }
 
-    /// <summary>Newest-first snapshot for display.</summary>
+    /// <summary>Newest-first snapshot across all categories.</summary>
     public IReadOnlyList<EventRecord> Snapshot()
     {
-        var result = new List<EventRecord>(this.items.Count);
-        for (var node = this.items.Last; node is not null; node = node.Previous)
+        var result = new List<EventRecord>();
+        foreach (var record in this.EnumerateNewestFirst())
         {
-            result.Add(node.Value);
+            result.Add(record);
         }
 
         return result;
     }
 
     /// <summary>
-    /// Lazily enumerates newest-first without materializing a list — lets the UI filter a large
-    /// log and render only the top matches. Safe because Add and the UI Draw run on the same
-    /// (main) thread, so no enumeration ever interleaves with a mutation.
+    /// Lazily merges the per-category partitions into one newest-first stream (k-way merge on the
+    /// global sequence number). Lets the UI take only the top matches without materializing a list.
     /// </summary>
     public IEnumerable<EventRecord> EnumerateNewestFirst()
     {
-        for (var node = this.items.Last; node is not null; node = node.Previous)
+        var cursors = new List<LinkedListNode<Entry>>();
+        foreach (var list in this.byCategory.Values)
         {
-            yield return node.Value;
+            if (list.Last is not null)
+            {
+                cursors.Add(list.Last);
+            }
+        }
+
+        while (cursors.Count > 0)
+        {
+            var maxIndex = 0;
+            for (var i = 1; i < cursors.Count; i++)
+            {
+                if (cursors[i].Value.Seq > cursors[maxIndex].Value.Seq)
+                {
+                    maxIndex = i;
+                }
+            }
+
+            var node = cursors[maxIndex];
+            yield return node.Value.Record;
+
+            var previous = node.Previous;
+            if (previous is null)
+            {
+                cursors.RemoveAt(maxIndex);
+            }
+            else
+            {
+                cursors[maxIndex] = previous;
+            }
         }
     }
 
-    public void Clear() => this.items.Clear();
-
-    private void Trim()
+    public void Clear()
     {
-        while (this.items.Count > this.capacity)
+        foreach (var list in this.byCategory.Values)
         {
-            this.items.RemoveFirst();
+            list.Clear();
         }
     }
+
+    private void Trim(EventCategory category)
+    {
+        var list = this.byCategory[category];
+        var limit = this.LimitFor(category);
+        while (list.Count > limit)
+        {
+            list.RemoveFirst();
+        }
+    }
+
+    private static int Clamp(int value) => value < MinLimit ? MinLimit : (value > MaxLimit ? MaxLimit : value);
+
+    private sealed record Entry(long Seq, EventRecord Record);
 }

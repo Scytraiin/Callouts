@@ -124,7 +124,7 @@ public sealed class LiveEventsWindow : Window, IDisposable
         {
             var category = categories[i];
             var on = this.shown[category];
-            if (ImGui.Checkbox($"{EventCategorizer.Label(category)}##cat{category}", ref on))
+            if (ImGui.Checkbox($"{EventCategorizer.Label(category)} ({this.buffer.CountFor(category)})##cat{category}", ref on))
             {
                 this.shown[category] = on;
             }

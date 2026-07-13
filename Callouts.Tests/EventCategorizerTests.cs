@@ -77,4 +77,56 @@ public sealed class EventBufferCapacityTests
 
         Assert.Equal(new[] { "e2", "e1" }, enumerated);
     }
+
+    private static EventRecord Chat(int n) => new() { Kind = TriggerKind.Chat, Display = $"c{n}", Event = new TriggerEvent { Kind = TriggerKind.Chat } };
+
+    private static EventRecord EnemyCast() => new() { Kind = TriggerKind.Cast, Display = "Ultima", Event = new TriggerEvent { Kind = TriggerKind.Cast, CasterIsEnemy = true } };
+
+    [Fact]
+    public void NoisyCategory_DoesNotEvictOthers()
+    {
+        var buffer = new EventBuffer(defaultLimit: 3);
+        for (var i = 0; i < 20; i++)
+        {
+            buffer.Add(Chat(i)); // floods the Chat partition well past its limit
+        }
+
+        buffer.Add(EnemyCast());
+
+        Assert.Equal(3, buffer.CountFor(EventCategory.Chat));      // chat trimmed to its own limit
+        Assert.Equal(1, buffer.CountFor(EventCategory.EnemyCast)); // the cast survived the flood
+    }
+
+    [Fact]
+    public void PerCategoryOverride_AppliesIndependentLimits()
+    {
+        var buffer = new EventBuffer(defaultLimit: 100);
+        buffer.SetLimits(100, new Dictionary<EventCategory, int> { [EventCategory.Chat] = 2 });
+
+        for (var i = 0; i < 5; i++)
+        {
+            buffer.Add(Chat(i));
+            buffer.Add(EnemyCast());
+        }
+
+        Assert.Equal(2, buffer.CountFor(EventCategory.Chat));       // override
+        Assert.Equal(5, buffer.CountFor(EventCategory.EnemyCast));  // default
+    }
+
+    [Fact]
+    public void Global_NewestFirst_MergesAcrossCategories()
+    {
+        var buffer = new EventBuffer(100);
+        buffer.Add(Chat(1));       // oldest
+        buffer.Add(EnemyCast());   // middle
+        buffer.Add(Chat(2));       // newest
+
+        var order = new List<TriggerKind>();
+        foreach (var r in buffer.EnumerateNewestFirst())
+        {
+            order.Add(r.Event.Kind);
+        }
+
+        Assert.Equal(new[] { TriggerKind.Chat, TriggerKind.Cast, TriggerKind.Chat }, order);
+    }
 }

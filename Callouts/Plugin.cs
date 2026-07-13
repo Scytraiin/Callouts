@@ -112,7 +112,7 @@ public sealed class Plugin : IDalamudPlugin
         this.clientState.TerritoryChanged += this.OnTerritoryChanged;
         this.condition.ConditionChange += this.OnConditionChange;
 
-        this.eventBuffer = new EventBuffer(this.configuration.Options.EventBufferSize);
+        this.eventBuffer = new EventBuffer(this.configuration.Options.EventLogDefaultLimit, this.configuration.Options.EventCategoryLimits);
 
         this.eventsWindow = new LiveEventsWindow(this.eventBuffer, this.engine, this.CreateRuleFromEvent);
         this.settingsWindow = new SettingsWindow(this.configuration, this.engine, this.eventBuffer, this.configuration.Save, this.OnAdvancedToggled);
