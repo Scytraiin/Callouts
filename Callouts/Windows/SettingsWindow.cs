@@ -101,12 +101,14 @@ public sealed class SettingsWindow : Window, IDisposable
         }
 
         var bufferSize = options.EventBufferSize;
-        if (ImGui.InputInt("Live-events buffer size", ref bufferSize))
+        if (ImGui.InputInt("Live-events log size (entries)", ref bufferSize))
         {
-            options.EventBufferSize = Math.Clamp(bufferSize, 10, 2000);
+            options.EventBufferSize = Math.Clamp(bufferSize, 50, 100_000);
             this.buffer.SetCapacity(options.EventBufferSize);
             this.save();
         }
+
+        ImGui.TextDisabled("Up to 100,000 entries. The window renders the newest matches; use search to narrow.");
 
         ImGui.Separator();
         ImGui.TextDisabled("SUGGESTIONS");

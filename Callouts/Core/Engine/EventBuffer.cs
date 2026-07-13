@@ -35,6 +35,8 @@ public sealed class EventBuffer
 
     public int Capacity => this.capacity;
 
+    public int Count => this.items.Count;
+
     public void SetCapacity(int value)
     {
         this.capacity = value < 1 ? 1 : value;
@@ -62,6 +64,19 @@ public sealed class EventBuffer
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Lazily enumerates newest-first without materializing a list — lets the UI filter a large
+    /// log and render only the top matches. Safe because Add and the UI Draw run on the same
+    /// (main) thread, so no enumeration ever interleaves with a mutation.
+    /// </summary>
+    public IEnumerable<EventRecord> EnumerateNewestFirst()
+    {
+        for (var node = this.items.Last; node is not null; node = node.Previous)
+        {
+            yield return node.Value;
+        }
     }
 
     public void Clear() => this.items.Clear();

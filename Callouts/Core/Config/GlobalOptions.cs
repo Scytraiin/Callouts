@@ -20,8 +20,8 @@ public sealed class GlobalOptions
     /// <summary>Default cooldown (seconds) applied to newly created rules.</summary>
     public double DefaultCooldownSeconds { get; set; } = 2.0;
 
-    /// <summary>Live-events ring buffer size (issue 010).</summary>
-    public int EventBufferSize { get; set; } = 200;
+    /// <summary>Live-events log size (entries kept in the ring buffer, issue 010).</summary>
+    public int EventBufferSize { get; set; } = 2000;
 
     /// <summary>Suggestion keys the user dismissed; never re-suggested (issue 020).</summary>
     public List<string> IgnoredSuggestionKeys { get; set; } = [];
