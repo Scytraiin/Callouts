@@ -36,4 +36,15 @@ public sealed class GlobalOptions
 
     /// <summary>Append every observed VFX spawn to a capture file for offline analysis (opt-in, no size cap).</summary>
     public bool VfxCaptureToFile { get; set; }
+
+    // --- Timeline (Cactbot-style) ---
+
+    /// <summary>Auto-pick the enabled timeline whose zone matches the current territory.</summary>
+    public bool TimelineAutoByZone { get; set; } = true;
+
+    /// <summary>Timeline to run when <see cref="TimelineAutoByZone"/> is off.</summary>
+    public string? ActiveTimelineId { get; set; }
+
+    /// <summary>How many seconds of upcoming entries the live timeline window shows.</summary>
+    public double TimelineLookAheadSeconds { get; set; } = 30;
 }

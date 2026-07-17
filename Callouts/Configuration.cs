@@ -6,6 +6,7 @@ using Dalamud.Plugin;
 
 using Callouts.Core.Config;
 using Callouts.Core.Rules;
+using Callouts.Core.Timeline;
 
 namespace Callouts;
 
@@ -20,6 +21,8 @@ public sealed class Configuration : IPluginConfiguration
     public int Version { get; set; } = CurrentVersion;
 
     public List<Rule> Rules { get; set; } = [];
+
+    public List<TimelineDefinition> Timelines { get; set; } = [];
 
     public GlobalOptions Options { get; set; } = new();
 

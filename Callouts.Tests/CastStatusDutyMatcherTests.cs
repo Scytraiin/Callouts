@@ -121,6 +121,62 @@ public sealed class CastStatusDutyMatcherTests
         Assert.NotNull(StatusTriggerMatcher.Match(StatusRule(minStacks: 3), StatusEvent(gained: true, stacks: 3)));
     }
 
+    private static Rule DurationRule(double min, double max) => new()
+    {
+        Source = new SourceSpec
+        {
+            Kind = TriggerKind.Status,
+            StatusChange = StatusChangeFilter.Gained,
+            Bearer = BearerScope.Self,
+            MinDurationSeconds = min,
+            MaxDurationSeconds = max,
+        },
+    };
+
+    private static TriggerEvent DurationEvent(double duration, bool gained = true) => new()
+    {
+        Kind = TriggerKind.Status,
+        StatusGained = gained,
+        BearerIsSelf = true,
+        StatusName = "Acceleration Bomb",
+        DurationSeconds = duration,
+    };
+
+    [Fact]
+    public void Status_DurationWindow_MatchesOnlyTheRightTimer()
+    {
+        // A rule that catches only the ~15s version (window 14..16).
+        var rule = DurationRule(min: 14, max: 16);
+
+        Assert.NotNull(StatusTriggerMatcher.Match(rule, DurationEvent(15.0)));
+        Assert.Null(StatusTriggerMatcher.Match(rule, DurationEvent(8.0)));   // short version excluded
+        Assert.Null(StatusTriggerMatcher.Match(rule, DurationEvent(20.0)));  // long version excluded
+    }
+
+    [Fact]
+    public void Status_DurationBounds_ZeroMeansUnbounded()
+    {
+        Assert.NotNull(StatusTriggerMatcher.Match(DurationRule(min: 10, max: 0), DurationEvent(999)));  // no upper bound
+        Assert.NotNull(StatusTriggerMatcher.Match(DurationRule(min: 0, max: 10), DurationEvent(1)));    // no lower bound
+        Assert.Null(StatusTriggerMatcher.Match(DurationRule(min: 10, max: 0), DurationEvent(9)));
+    }
+
+    [Fact]
+    public void Status_Duration_IgnoredOnRemoval()
+    {
+        // A removal reports duration 0; the duration filter must not block it.
+        Assert.NotNull(StatusTriggerMatcher.Match(
+            new Rule { Source = new SourceSpec { Kind = TriggerKind.Status, StatusChange = StatusChangeFilter.Removed, Bearer = BearerScope.Self, MinDurationSeconds = 14 } },
+            DurationEvent(0, gained: false)));
+    }
+
+    [Fact]
+    public void Status_ExposesDurationPlaceholder()
+    {
+        var result = StatusTriggerMatcher.Match(DurationRule(0, 0), DurationEvent(15));
+        Assert.Equal("15", result!.Values["duration"]);
+    }
+
     // ---- Duty ----
 
     [Fact]

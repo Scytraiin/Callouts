@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 
 using Dalamud.Game.ClientState.Conditions;
@@ -14,6 +15,7 @@ using Callouts.Core.Config;
 using Callouts.Core.Engine;
 using Callouts.Core.Rules;
 using Callouts.Core.Suggestions;
+using Callouts.Core.Timeline;
 using Callouts.Logging;
 using Callouts.Sinks;
 using Callouts.Sources;
@@ -30,6 +32,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly IClientState clientState;
     private readonly IDataManager dataManager;
     private readonly ICondition condition;
+    private readonly IFramework framework;
     private readonly IPluginLog log;
 
     private readonly WindowSystem windowSystem = new("Callouts");
@@ -37,12 +40,16 @@ public sealed class Plugin : IDalamudPlugin
     private readonly LiveEventsWindow eventsWindow;
     private readonly SettingsWindow settingsWindow;
     private readonly SuggestionsWindow suggestionsWindow;
+    private readonly TimelineWindow timelineWindow;
     private readonly Configuration configuration;
 
     private readonly RuleEngine engine;
     private readonly EventBuffer eventBuffer;
     private readonly VfxCaptureLog vfxCaptureLog;
     private readonly SuggestionCollector suggestionCollector = new();
+    private readonly TimelineRunner timelineRunner = new();
+    private readonly FightRecorder fightRecorder = new();
+    private readonly Stopwatch fightClock = new();
     private readonly List<ITriggerSource> sources = [];
     private readonly VfxSource vfxSource;
     private readonly Dictionary<AlertOutputKind, IAlertSink> sinks;
@@ -71,6 +78,7 @@ public sealed class Plugin : IDalamudPlugin
         this.clientState = clientState;
         this.dataManager = dataManager;
         this.condition = condition;
+        this.framework = framework;
         this.log = log;
 
         // Migrate/back up the on-disk config before loading it (FR-9).
@@ -113,6 +121,7 @@ public sealed class Plugin : IDalamudPlugin
         this.currentZone = this.ResolveZoneName(this.clientState.TerritoryType);
         this.clientState.TerritoryChanged += this.OnTerritoryChanged;
         this.condition.ConditionChange += this.OnConditionChange;
+        this.framework.Update += this.OnFrameworkUpdate;
 
         this.eventBuffer = new EventBuffer(this.configuration.Options.EventLogDefaultLimit, this.configuration.Options.EventCategoryLimits);
 
@@ -127,6 +136,14 @@ public sealed class Plugin : IDalamudPlugin
         this.settingsWindow = new SettingsWindow(this.configuration, this.engine, this.eventBuffer, this.vfxCaptureLog, this.configuration.Save, this.OnAdvancedToggled);
         this.settingsWindow.SetAdvancedHealthProvider(this.DescribeAdvancedHealth);
         this.suggestionsWindow = new SuggestionsWindow(this.suggestionCollector, this.configuration, this.CreateRuleFromSuggestion, this.configuration.Save);
+        this.timelineWindow = new TimelineWindow(
+            this.configuration,
+            this.timelineRunner,
+            this.fightRecorder,
+            () => this.fightClock.Elapsed.TotalSeconds,
+            () => (this.clientState.TerritoryType, this.currentZone),
+            this.configuration.Save,
+            this.ReloadTimeline);
         this.rulesWindow = new RulesWindow(
             this.configuration,
             this.engine,
@@ -135,16 +152,18 @@ public sealed class Plugin : IDalamudPlugin
             () => this.eventsWindow.IsOpen = true,
             () => this.settingsWindow.IsOpen = true,
             () => this.suggestionsWindow.IsOpen = true,
+            () => this.timelineWindow.IsOpen = true,
             () => (this.clientState.TerritoryType, this.currentZone));
 
         this.windowSystem.AddWindow(this.rulesWindow);
         this.windowSystem.AddWindow(this.eventsWindow);
         this.windowSystem.AddWindow(this.settingsWindow);
         this.windowSystem.AddWindow(this.suggestionsWindow);
+        this.windowSystem.AddWindow(this.timelineWindow);
 
         this.commandManager.AddHandler(CommandName, new CommandInfo(this.OnCommand)
         {
-            HelpMessage = "Open Callouts. Subcommands: on, off, config, events.",
+            HelpMessage = "Open Callouts. Subcommands: on, off, config, events, suggestions, timeline.",
         });
 
         this.pluginInterface.UiBuilder.Draw += this.DrawUi;
@@ -170,6 +189,7 @@ public sealed class Plugin : IDalamudPlugin
 
         this.clientState.TerritoryChanged -= this.OnTerritoryChanged;
         this.condition.ConditionChange -= this.OnConditionChange;
+        this.framework.Update -= this.OnFrameworkUpdate;
 
         foreach (var source in this.sources)
         {
@@ -187,6 +207,7 @@ public sealed class Plugin : IDalamudPlugin
         this.eventsWindow.Dispose();
         this.settingsWindow.Dispose();
         this.suggestionsWindow.Dispose();
+        this.timelineWindow.Dispose();
     }
 
     private void CreateRuleFromEvent(TriggerEvent evt) => this.rulesWindow.BeginCreateFromEvent(evt);
@@ -340,6 +361,13 @@ public sealed class Plugin : IDalamudPlugin
         this.suggestionCollector.Observe(enriched);
         this.vfxCaptureLog.Write(enriched);
 
+        if (this.fightClock.IsRunning)
+        {
+            var elapsed = this.fightClock.Elapsed.TotalSeconds;
+            this.fightRecorder.Add(elapsed, enriched);
+            this.timelineRunner.Observe(enriched, elapsed);
+        }
+
         IReadOnlyList<AlertAction> actions;
         try
         {
@@ -381,10 +409,54 @@ public sealed class Plugin : IDalamudPlugin
         {
             // Entering combat starts a fresh encounter; the finished one stays under "This session".
             this.suggestionCollector.RollEncounter();
+
+            // Start the fight clock + timeline for this pull.
+            this.fightClock.Restart();
+            this.fightRecorder.Start();
+            this.ReloadTimeline();
         }
-        else if (this.configuration.Options.AutoOpenSuggestions)
+        else
         {
-            this.suggestionsWindow.IsOpen = true;
+            this.fightClock.Stop();
+            this.fightRecorder.Stop();
+            this.timelineRunner.Stop();
+
+            if (this.configuration.Options.AutoOpenSuggestions)
+            {
+                this.suggestionsWindow.IsOpen = true;
+            }
+        }
+    }
+
+    private void ReloadTimeline()
+    {
+        var options = this.configuration.Options;
+        var timeline = TimelineSelector.Select(
+            this.configuration.Timelines,
+            this.clientState.TerritoryType,
+            options.TimelineAutoByZone,
+            options.ActiveTimelineId);
+
+        this.timelineRunner.Load(timeline);
+
+        // Only run the clock/alerts while actually in combat.
+        if (this.condition[ConditionFlag.InCombat])
+        {
+            this.timelineRunner.Start();
+        }
+    }
+
+    private void OnFrameworkUpdate(IFramework framework)
+    {
+        if (!this.timelineRunner.Running || !this.fightClock.IsRunning)
+        {
+            return;
+        }
+
+        var alerts = this.timelineRunner.Advance(this.fightClock.Elapsed.TotalSeconds);
+        for (var i = 0; i < alerts.Count; i++)
+        {
+            this.ExecuteAction(alerts[i]);
         }
     }
 
@@ -425,6 +497,10 @@ public sealed class Plugin : IDalamudPlugin
             case "suggestions":
             case "suggest":
                 this.suggestionsWindow.IsOpen = true;
+                break;
+            case "timeline":
+            case "tl":
+                this.timelineWindow.IsOpen = true;
                 break;
             default:
                 this.rulesWindow.IsOpen = !this.rulesWindow.IsOpen;

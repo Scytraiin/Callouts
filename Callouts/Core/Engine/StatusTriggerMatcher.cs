@@ -56,6 +56,20 @@ public static class StatusTriggerMatcher
             return null;
         }
 
+        // Duration (applied timer) only meaningful for a gained status; a removal reports 0.
+        if (evt.StatusGained)
+        {
+            if (s.MinDurationSeconds > 0 && evt.DurationSeconds < s.MinDurationSeconds)
+            {
+                return null;
+            }
+
+            if (s.MaxDurationSeconds > 0 && evt.DurationSeconds > s.MaxDurationSeconds)
+            {
+                return null;
+            }
+        }
+
         return new MatchResult
         {
             Values = new Dictionary<string, string>(System.StringComparer.OrdinalIgnoreCase)
@@ -63,6 +77,7 @@ public static class StatusTriggerMatcher
                 ["status"] = evt.StatusName,
                 ["bearer"] = evt.BearerName,
                 ["zone"] = evt.Zone,
+                ["duration"] = evt.DurationSeconds.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture),
             },
         };
     }

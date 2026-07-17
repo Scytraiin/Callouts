@@ -35,6 +35,12 @@ public sealed class SourceSpec
     public BearerScope Bearer { get; set; } = BearerScope.Self;
     public int MinStacks { get; set; }
 
+    /// <summary>Only match a gained status whose applied timer is at least this many seconds (0 = no lower bound).</summary>
+    public double MinDurationSeconds { get; set; }
+
+    /// <summary>Only match a gained status whose applied timer is at most this many seconds (0 = no upper bound).</summary>
+    public double MaxDurationSeconds { get; set; }
+
     // --- Duty ---
     public DutyEventFilter DutyEvent { get; set; } = DutyEventFilter.Any;
 
@@ -63,6 +69,8 @@ public sealed class SourceSpec
         StatusChange = this.StatusChange,
         Bearer = this.Bearer,
         MinStacks = this.MinStacks,
+        MinDurationSeconds = this.MinDurationSeconds,
+        MaxDurationSeconds = this.MaxDurationSeconds,
         DutyEvent = this.DutyEvent,
         VfxPathPattern = this.VfxPathPattern,
         VfxMatchMode = this.VfxMatchMode,

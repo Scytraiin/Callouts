@@ -29,6 +29,7 @@ public sealed class RulesWindow : Window, IDisposable
     private readonly Action openEvents;
     private readonly Action openSettings;
     private readonly Action openSuggestions;
+    private readonly Action openTimeline;
     private readonly Func<(uint Id, string Name)> currentZone;
 
     private Rule? draft;
@@ -59,6 +60,7 @@ public sealed class RulesWindow : Window, IDisposable
         Action openEvents,
         Action openSettings,
         Action openSuggestions,
+        Action openTimeline,
         Func<(uint Id, string Name)> currentZone)
         : base("Callouts — Rules###CalloutsRules")
     {
@@ -69,6 +71,7 @@ public sealed class RulesWindow : Window, IDisposable
         this.openEvents = openEvents;
         this.openSettings = openSettings;
         this.openSuggestions = openSuggestions;
+        this.openTimeline = openTimeline;
         this.currentZone = currentZone;
 
         this.SizeConstraints = new WindowSizeConstraints
@@ -170,6 +173,12 @@ public sealed class RulesWindow : Window, IDisposable
         if (ImGui.Button("💡 Suggestions"))
         {
             this.openSuggestions();
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("⏱ Timeline"))
+        {
+            this.openTimeline();
         }
 
         ImGui.SameLine();
@@ -706,6 +715,20 @@ public sealed class RulesWindow : Window, IDisposable
         {
             s.MinStacks = Math.Max(0, minStacks);
         }
+
+        var minDuration = s.MinDurationSeconds;
+        if (ImGui.InputDouble("Min timer sec (0 = any)", ref minDuration))
+        {
+            s.MinDurationSeconds = Math.Max(0, minDuration);
+        }
+
+        var maxDuration = s.MaxDurationSeconds;
+        if (ImGui.InputDouble("Max timer sec (0 = any)", ref maxDuration))
+        {
+            s.MaxDurationSeconds = Math.Max(0, maxDuration);
+        }
+
+        ImGui.TextDisabled("Timer matches the applied duration on gain — e.g. 14–16 catches only the 15s version. {duration} is a placeholder.");
     }
 
     private static void DrawDutyWhen(SourceSpec s)
